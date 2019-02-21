@@ -3,6 +3,7 @@ from collections import defaultdict
 import logging
 import os
 
+from .batch import BatchManager
 from .conf import Conf
 from .database import DatabaseManager, DatabaseMigrationManager
 from .task import TaskManager
@@ -18,12 +19,17 @@ class McKenzie:
     ENV_CONF = 'MCKENZIE_CONF'
 
     MANAGERS = {
+        'batch': BatchManager,
         'database': DatabaseManager,
         'database.migration': DatabaseMigrationManager,
         'task': TaskManager,
     }
 
     PREFLIGHT_ARGS = defaultdict(dict, {
+        'batch': {
+            'database_init': False,
+            'database_update': False,
+        },
         'database': {
             'database_init': False,
             'database_update': False,
@@ -40,6 +46,15 @@ class McKenzie:
         p.add_argument('-q', '--quiet', action='count', help='decrease verbosity')
         p.add_argument('-v', '--verbose', action='count', help='increase verbosity')
         p_sub = p.add_subparsers(dest='command')
+
+        # batch
+        p_batch = p_sub.add_parser('batch', help='batch command execution')
+        p_batch_sub = p_batch.add_subparsers(dest='subcommand')
+
+        # batch run
+        p_batch_run = p_batch_sub.add_parser('run', help='run commands from a file')
+        p_batch_run.add_argument('--progress', action='store_true', help='show progress')
+        p_batch_run.add_argument('path', nargs='*', help='path to file of commands')
 
         # database
         p_database = p_sub.add_parser('database', help='database management')
