@@ -1,6 +1,7 @@
 import argparse
 from collections import defaultdict
 import logging
+import os
 
 from .conf import Conf
 from .database import DatabaseManager, DatabaseMigrationManager
@@ -14,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 class McKenzie:
+    ENV_CONF = 'MCKENZIE_CONF'
+
     MANAGERS = {
         'database': DatabaseManager,
         'database.migration': DatabaseMigrationManager,
@@ -33,7 +36,7 @@ class McKenzie:
     @staticmethod
     def _cmdline_parser():
         p = argparse.ArgumentParser(prog='mck')
-        p.add_argument('--conf', required=True, help='path to configuration file')
+        p.add_argument('--conf', help='path to configuration file')
         p.add_argument('-q', '--quiet', action='count', help='decrease verbosity')
         p.add_argument('-v', '--verbose', action='count', help='increase verbosity')
         p_sub = p.add_subparsers(dest='command')
@@ -86,12 +89,24 @@ class McKenzie:
         new_level = max(1, root_logger.getEffectiveLevel() + verbosity_change)
         root_logger.setLevel(new_level)
 
+        if args.conf is not None:
+            conf_path = args.conf
+        else:
+            try:
+                conf_path = os.environ[cls.ENV_CONF]
+            except KeyError:
+                logger.error('Path to configuration file must be specified '
+                             f'via either --conf option or {cls.ENV_CONF} '
+                             'environment variable.')
+
+                return
+
         if args.command is None:
             parser.print_usage()
 
             return
 
-        mck = McKenzie(args.conf)
+        mck = McKenzie(conf_path)
         mck.call_manager(args)
 
     def __init__(self, conf_path):
