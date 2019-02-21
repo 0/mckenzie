@@ -1,7 +1,9 @@
 from configparser import (ConfigParser, NoOptionError, NoSectionError,
                           ParsingError)
 import logging
+import os
 from pathlib import Path
+import stat as s
 
 from .database import Database
 from .util import HandledException
@@ -35,6 +37,20 @@ class Conf:
 
         self.parser = ConfigParser()
 
+        # Check permissions.
+        try:
+            mode = os.stat(self.conf_path).st_mode
+        except OSError as e:
+            logger.error('Failed to stat configuration file '
+                         f'"{self.conf_path}" ({e.strerror}).')
+
+            raise HandledException()
+
+        if mode & (s.S_IRWXG | s.S_IRWXO):
+            logger.warning(f'Configuration file "{self.conf_path}" has '
+                           'permissions for group or other.')
+
+        # Read configuration.
         try:
             logger.debug(f'Using configuration path "{self.conf_path}".')
 
