@@ -69,6 +69,7 @@ class McKenzie:
         # task list
         p_task_list = p_task_sub.add_parser('list', help='list tasks')
         p_task_list.add_argument('--state', metavar='S', help='only tasks in state S')
+        p_task_list.add_argument('--name-pattern', metavar='P', help='only tasks with names matching the SQL LIKE pattern P')
 
         return p
 

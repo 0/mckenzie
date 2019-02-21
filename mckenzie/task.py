@@ -134,6 +134,7 @@ class TaskManager(Manager):
 
     def list(self, args):
         state_name = args.state
+        name_pattern = args.name_pattern
 
         if state_name is not None:
             try:
@@ -152,9 +153,17 @@ class TaskManager(Manager):
                     '''
             query_args = ()
 
+            where_added = False
+
             if state_id is not None:
-                query += ' WHERE state_id = %s'
+                query += f' {"AND" if where_added else "WHERE"} state_id = %s'
                 query_args += (state_id,)
+                where_added = True
+
+            if name_pattern is not None:
+                query += f' {"AND" if where_added else "WHERE"} name LIKE %s'
+                query_args += (name_pattern,)
+                where_added = True
 
             query += ' ORDER BY id'
 
