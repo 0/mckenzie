@@ -7,6 +7,7 @@ from .batch import BatchManager
 from .conf import Conf
 from .database import DatabaseManager, DatabaseMigrationManager
 from .task import TaskManager
+from .util import foreverdict
 
 # For export.
 from .util import HandledException
@@ -40,12 +41,14 @@ class McKenzie:
     })
 
     @staticmethod
-    def _cmdline_parser():
-        p = argparse.ArgumentParser(prog='mck')
-        p.add_argument('--conf', help='path to configuration file')
-        p.add_argument('-q', '--quiet', action='count', help='decrease verbosity')
-        p.add_argument('-v', '--verbose', action='count', help='increase verbosity')
+    def _cmdline_parser(*, name='mck', global_args=True, add_help=True):
+        p = argparse.ArgumentParser(prog=name, add_help=add_help)
         p_sub = p.add_subparsers(dest='command')
+
+        if global_args:
+            p.add_argument('--conf', help='path to configuration file')
+            p.add_argument('-q', '--quiet', action='count', help='decrease verbosity')
+            p.add_argument('-v', '--verbose', action='count', help='increase verbosity')
 
         # batch
         p_batch = p_sub.add_parser('batch', help='batch command execution')
@@ -55,6 +58,9 @@ class McKenzie:
         p_batch_run = p_batch_sub.add_parser('run', help='run commands from a file')
         p_batch_run.add_argument('--progress', action='store_true', help='show progress')
         p_batch_run.add_argument('path', nargs='*', help='path to file of commands')
+
+        # batch shell
+        p_batch_shell = p_batch_sub.add_parser('shell', help='run commands interactively')
 
         # database
         p_database = p_sub.add_parser('database', help='database management')
@@ -87,6 +93,29 @@ class McKenzie:
         p_task_list.add_argument('--name-pattern', metavar='P', help='only tasks with names matching the SQL LIKE pattern P')
 
         return p
+
+    @staticmethod
+    def _parser_commands(p):
+        parsers = [((), p)]
+        commands = foreverdict()
+
+        while parsers:
+            pieces, parser = parsers.pop(0)
+
+            for action in parser._actions:
+                if not isinstance(action, argparse._SubParsersAction):
+                    continue
+
+                for name, subparser in action.choices.items():
+                    pieces_new = pieces + (name,)
+                    parsers.append((pieces_new, subparser))
+
+                    d = commands
+
+                    for piece in pieces_new:
+                        d = d[piece]
+
+        return commands
 
     @classmethod
     def from_args(cls, argv):

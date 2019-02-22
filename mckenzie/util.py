@@ -11,6 +11,10 @@ class HandledException(Exception):
     pass
 
 
+def foreverdict():
+    return defaultdict(foreverdict)
+
+
 def format_datetime(dt):
     # Convert to the local time zone, then forget the time zone.
     dt_local = dt.astimezone().replace(tzinfo=None)
