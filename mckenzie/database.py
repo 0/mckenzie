@@ -92,13 +92,14 @@ class Database:
                         retries_left -= 1
 
     def is_initialized(self, *, log=logger.info):
-        def F(tx):
-            return tx.execute('SELECT 1')
-
         try:
-            success = self.tx(F) == [(1,)]
+            @self.tx
+            def result(tx):
+                return tx.execute('SELECT 1')
         except psycopg2.OperationalError:
             success = False
+        else:
+            success = result == [(1,)]
 
         if not success:
             log(f'Database "{self.dbname}" at {self.host}:{self.port} has not '
@@ -111,10 +112,9 @@ class Database:
         success_extra = True
 
         # Migrations.
-        def F(tx):
+        @self.tx
+        def applied_migrations(tx):
             return DatabaseMigrationManager.get_applied_migrations(tx)
-
-        applied_migrations = self.tx(F)
 
         all_migrations = DatabaseMigrationManager.get_all_migrations()
         pending_migrations = all_migrations.keys() - applied_migrations.keys()
@@ -215,10 +215,9 @@ class DatabaseMigrationManager(Manager):
         return applied_migrations
 
     def summary(self, args):
-        def F(tx):
+        @self.db.tx
+        def applied_migrations(tx):
             return self.get_applied_migrations(tx)
-
-        applied_migrations = self.db.tx(F)
 
         all_migrations = self.get_all_migrations()
 
@@ -246,10 +245,9 @@ class DatabaseMigrationManager(Manager):
         print_table(['State', 'Count'], migration_data, total=('Total', (1,)))
 
     def list(self, args):
-        def F(tx):
+        @self.db.tx
+        def applied_migrations(tx):
             return self.get_applied_migrations(tx)
-
-        applied_migrations = self.db.tx(F)
 
         migration_data = []
 
@@ -266,7 +264,8 @@ class DatabaseMigrationManager(Manager):
     def update(self, args):
         all_migrations = self.get_all_migrations()
 
-        def F(tx):
+        @self.db.tx
+        def new_migrations(tx):
             applied_migrations = self.get_applied_migrations(tx, lock=True)
 
             new_migrations = []
@@ -295,5 +294,5 @@ class DatabaseMigrationManager(Manager):
 
             return new_migrations
 
-        for name in self.db.tx(F):
+        for name in new_migrations:
             logger.info(name)

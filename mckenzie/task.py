@@ -18,14 +18,15 @@ class TaskState(DatabaseView):
         # Mapping from names to IDs.
         self._dict_r = {}
 
-        def F(tx):
+        @self.db.tx
+        def states(tx):
             return tx.execute('''
                     SELECT id, name
                     FROM task_state
                     ORDER BY id
                     ''')
 
-        for state_id, name in self.db.tx(F):
+        for state_id, name in states:
             self._dict_f[state_id] = name
             self._dict_r[name] = state_id
 
@@ -51,14 +52,15 @@ class TaskReason(DatabaseView):
         # Mapping from names to IDs.
         self._dict_r = {}
 
-        def F(tx):
+        @self.db.tx
+        def reasons(tx):
             return tx.execute('''
                     SELECT id, name
                     FROM task_reason
                     ORDER BY id
                     ''')
 
-        for reason_id, name in self.db.tx(F):
+        for reason_id, name in reasons:
             self._dict_r[name] = reason_id
 
     def rlookup(self, name):
@@ -112,14 +114,13 @@ class TaskManager(Manager):
         self._tr = TaskReason(self.db)
 
     def summary(self, args):
-        def F(tx):
+        @self.db.tx
+        def tasks(tx):
             return tx.execute('''
                     SELECT state_id, SUM(time_limit), COUNT(*)
                     FROM task
                     GROUP BY state_id
                     ''')
-
-        tasks = self.db.tx(F)
 
         if not tasks:
             logger.info('No tasks found.')
@@ -147,6 +148,7 @@ class TaskManager(Manager):
 
             return
 
+        @self.db.tx
         def F(tx):
             task = tx.execute('''
                     INSERT INTO task (name, state_id, priority, time_limit,
@@ -173,8 +175,6 @@ class TaskManager(Manager):
 
             self._unclaim(tx, task_id, self.ident)
 
-        self.db.tx(F)
-
     def list(self, args):
         state_name = args.state
         name_pattern = args.name_pattern
@@ -189,7 +189,8 @@ class TaskManager(Manager):
         else:
             state_id = None
 
-        def F(tx):
+        @self.db.tx
+        def tasks(tx):
             query = '''
                     SELECT name, state_id, priority, time_limit, mem_limit_mb
                     FROM task
@@ -211,8 +212,6 @@ class TaskManager(Manager):
             query += ' ORDER BY id'
 
             return tx.execute(query, query_args)
-
-        tasks = self.db.tx(F)
 
         task_data = []
 
