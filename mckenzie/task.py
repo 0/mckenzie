@@ -2,7 +2,7 @@ from contextlib import ExitStack
 from datetime import timedelta
 import logging
 
-from .base import DatabaseView, Manager
+from .base import DatabaseReasonView, DatabaseStateView, Manager
 from .database import CheckViolation
 from .util import print_table
 
@@ -18,62 +18,14 @@ logger = logging.getLogger(__name__)
 # new ->+->+-> waiting -> ready
 
 
-class TaskState(DatabaseView):
+class TaskState(DatabaseStateView):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        # Mapping from IDs to names.
-        self._dict_f = {}
-        # Mapping from names to IDs.
-        self._dict_r = {}
-
-        @self.db.tx
-        def states(tx):
-            return tx.execute('''
-                    SELECT id, name
-                    FROM task_state
-                    ORDER BY id
-                    ''')
-
-        for state_id, name in states:
-            self._dict_f[state_id] = name
-            self._dict_r[name] = state_id
-
-    def lookup(self, state_id, *, user=False):
-        name = self._dict_f[state_id]
-
-        if user:
-            name = name[3:]
-
-        return name
-
-    def rlookup(self, name, *, user=False):
-        if user:
-            name = 'ts_' + name
-
-        return self._dict_r[name]
+        super().__init__('task_state', 'ts_', *args, **kwargs)
 
 
-class TaskReason(DatabaseView):
+class TaskReason(DatabaseReasonView):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        # Mapping from names to IDs.
-        self._dict_r = {}
-
-        @self.db.tx
-        def reasons(tx):
-            return tx.execute('''
-                    SELECT id, name
-                    FROM task_reason
-                    ORDER BY id
-                    ''')
-
-        for reason_id, name in reasons:
-            self._dict_r[name] = reason_id
-
-    def rlookup(self, name):
-        return self._dict_r[name]
+        super().__init__('task_reason', *args, **kwargs)
 
 
 class TaskClaimError(Exception):
