@@ -73,14 +73,27 @@ class DatabaseStateView(DatabaseView):
         return self._dict_r[name]
 
 
-class Manager:
+class Agent:
     def __init__(self, mck):
         self.mck = mck
 
         self.conf = mck.conf
         self.db = mck.conf.db
 
+    @property
+    def ident(self):
+        return self._ident
+
+
+class Instance(Agent):
+    pass
+
+
+class Manager(Agent):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
         pid = os.getpid()
         rand = randint(0, 0xff)
         # 00000001 RRRRRRRR PPPPPPPP PPPPPPPP
-        self.ident = (0x01 << 24) | (rand << 16) | (pid & 0xffff)
+        self._ident = (0x01 << 24) | (rand << 16) | (pid & 0xffff)
