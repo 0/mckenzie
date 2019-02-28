@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+
+if __name__ == '__main__':
+    import logging
+    from sys import argv
+
+    logging.basicConfig(level=logging.INFO, datefmt='%Y-%m-%dT%H:%M:%S',
+                        format='%(asctime)s %(levelname)s '
+                               '(%(name)s:%(lineno)d) %(message)s')
+
+    from mckenzie import HandledException, McKenzie
+
+    try:
+        McKenzie.from_args(argv[1:])
+    except HandledException:
+        pass
