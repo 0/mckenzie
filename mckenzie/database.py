@@ -165,7 +165,7 @@ class DatabaseMigrationManager(Manager):
                 continue
 
             # Migration file names must include a type flag.
-            if pre_name[13] not in ['T']:
+            if pre_name[13] not in ['F', 'T']:
                 continue
 
             # Remove file extension.

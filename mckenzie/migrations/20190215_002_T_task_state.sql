@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS task_state
+(
+	id SERIAL PRIMARY KEY,
+	name TEXT NOT NULL UNIQUE
+);
+
+INSERT INTO task_state (name)
+VALUES ('ts_new')
+ON CONFLICT (name) DO NOTHING;

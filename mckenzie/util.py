@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 class HandledException(Exception):
@@ -19,10 +19,41 @@ def format_datetime(dt):
     return dt_local.isoformat(sep=' ', timespec='seconds')
 
 
+def format_int(n):
+    pieces = []
+
+    for i, c in enumerate(reversed(str(n))):
+        if i % 3 == 0:
+            pieces.append(c)
+        else:
+            pieces[-1] = c + pieces[-1]
+
+    return ','.join(reversed(pieces))
+
+
+def format_timedelta(td):
+    hms = int(td.total_seconds())
+    sign = '-' if hms < 0 else ''
+    hm, s = divmod(abs(hms), 60)
+    h, m = divmod(hm, 60)
+
+    # Format as [-]H...HH:MM:SS.
+    return f'{sign}{h}:{m:02}:{s:02}'
+
+
 FORMAT_FUNCTIONS = defaultdict(lambda: str, {
     datetime: format_datetime,
+    int: format_int,
+    timedelta: format_timedelta,
     type(None): lambda x: '',
 })
+
+
+RIGHT_ALIGNS = set([
+    datetime,
+    int,
+    timedelta,
+])
 
 
 def print_table(header, data, *, total=None):
@@ -37,6 +68,13 @@ def print_table(header, data, *, total=None):
             row_str.append(format_f(elem))
 
         data_str.append(row_str)
+
+    # Determine alignments.
+    if len(data) > 0:
+        row = data[0]
+        aligns = ['>' if type(elem) in RIGHT_ALIGNS else '<' for elem in row]
+    else:
+        aligns = []
 
     # Compute column totals.
     if total is not None:
@@ -92,8 +130,8 @@ def print_table(header, data, *, total=None):
     print('+')
 
     for row in data_str:
-        for t, w in zip(row, max_widths):
-            print('| {{:{}}} '.format(w).format(t), end='')
+        for t, a, w in zip(row, aligns, max_widths):
+            print('| {{:{}{}}} '.format(a, w).format(t), end='')
 
         print('|')
 
@@ -103,7 +141,7 @@ def print_table(header, data, *, total=None):
 
         print('+')
 
-        for t, w in zip(total_row, max_widths):
-            print('| {{:{}}} '.format(w).format(t), end='')
+        for t, a, w in zip(total_row, aligns, max_widths):
+            print('| {{:{}{}}} '.format(a, w).format(t), end='')
 
         print('|')

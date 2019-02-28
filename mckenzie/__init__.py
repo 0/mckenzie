@@ -4,6 +4,7 @@ import logging
 
 from .conf import Conf
 from .database import DatabaseManager, DatabaseMigrationManager
+from .task import TaskManager
 
 # For export.
 from .util import HandledException
@@ -16,6 +17,7 @@ class McKenzie:
     MANAGERS = {
         'database': DatabaseManager,
         'database.migration': DatabaseMigrationManager,
+        'task': TaskManager,
     }
 
     PREFLIGHT_ARGS = defaultdict(dict, {
@@ -49,6 +51,21 @@ class McKenzie:
 
         # database migration update
         p_database_migration_update = p_database_migration_sub.add_parser('update', help='apply all pending migrations')
+
+        # task
+        p_task = p_sub.add_parser('task', help='task management')
+        p_task_sub = p_task.add_subparsers(dest='subcommand')
+
+        # task add
+        p_task_add = p_task_sub.add_parser('add', help='create a new task')
+        p_task_add.add_argument('--time', metavar='T', type=float, required=True, help='time limit in hours')
+        p_task_add.add_argument('--mem', metavar='M', type=float, required=True, help='memory limit in GB')
+        p_task_add.add_argument('--priority', metavar='P', type=int, default=0, help='task priority (default: 0)')
+        p_task_add.add_argument('name', help='name for the new task')
+
+        # task list
+        p_task_list = p_task_sub.add_parser('list', help='list tasks')
+        p_task_list.add_argument('--state', metavar='S', help='only tasks in state S')
 
         return p
 
