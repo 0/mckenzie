@@ -283,7 +283,18 @@ class DatabaseMigrationManager(Manager):
                 sha256_hash = hashlib.sha256(migration_encoded)
                 sha256_digest = sha256_hash.hexdigest()
 
-                tx.execute(migration_file_data)
+                if path.endswith('.py'):
+                    from .task import TaskReason, TaskState
+
+                    g = {
+                        'tx': tx,
+                        'tr': TaskReason(self.db),
+                        'ts': TaskState(self.db),
+                    }
+
+                    exec(migration_file_data, g)
+                elif path.endswith('.sql'):
+                    tx.execute(migration_file_data)
 
                 tx.execute('''
                         INSERT INTO database_migration (name, sha256_digest)
