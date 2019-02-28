@@ -16,15 +16,21 @@ class Transaction:
     def __init__(self, curs):
         self.curs = curs
 
-    def execute(self, *args, **kwargs):
+    def _execute(self, f, *args, **kwargs):
         logger.debug('Executing query.')
-        self.curs.execute(*args, **kwargs)
+        f(*args, **kwargs)
 
         try:
             return self.curs.fetchall()
         except psycopg2.ProgrammingError as e:
             if e.args != ('no results to fetch',):
                 raise
+
+    def callproc(self, *args, **kwargs):
+        return self._execute(self.curs.callproc, *args, **kwargs)
+
+    def execute(self, *args, **kwargs):
+        return self._execute(self.curs.execute, *args, **kwargs)
 
     def savepoint(self, name):
         self.execute(f'SAVEPOINT {name}')
