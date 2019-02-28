@@ -32,6 +32,8 @@ class McKenzie:
     def _cmdline_parser():
         p = argparse.ArgumentParser(prog='mck')
         p.add_argument('--conf', required=True, help='path to configuration file')
+        p.add_argument('-q', '--quiet', action='count', help='decrease verbosity')
+        p.add_argument('-v', '--verbose', action='count', help='increase verbosity')
         p_sub = p.add_subparsers(dest='command')
 
         # database
@@ -54,6 +56,18 @@ class McKenzie:
     def from_args(cls, argv):
         parser = cls._cmdline_parser()
         args = parser.parse_args(argv)
+
+        verbosity_change = 0
+
+        if args.quiet is not None:
+            verbosity_change += 10 * args.quiet
+
+        if args.verbose is not None:
+            verbosity_change -= 10 * args.verbose
+
+        root_logger = logging.getLogger()
+        new_level = max(1, root_logger.getEffectiveLevel() + verbosity_change)
+        root_logger.setLevel(new_level)
 
         if args.command is None:
             parser.print_usage()
