@@ -77,6 +77,10 @@ class McKenzie:
         p_database_migration_update = p_database_migration_sub.add_parser('update', help='apply all pending migrations')
         p_database_migration_update.add_argument('--insane', action='store_true', help='skip sanity check')
 
+        # database show
+        p_database_show = p_database_sub.add_parser('show', help='show entity details')
+        p_database_show.add_argument('name', nargs='?', help='name of entity')
+
         # task
         p_task = p_sub.add_parser('task', help='task management')
         p_task_sub = p_task.add_subparsers(dest='subcommand')

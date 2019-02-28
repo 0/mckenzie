@@ -1,3 +1,4 @@
+from collections import defaultdict
 import hashlib
 import logging
 import os
@@ -166,6 +167,39 @@ class Database:
 
 
 class DatabaseManager(Manager):
+    ENTITY_TYPES = {
+        'F': 'function',
+        'T': 'table',
+    }
+
+    def _entities(self):
+        all_migrations = DatabaseMigrationManager.get_all_migrations()
+
+        @self.db.tx
+        def applied_migrations(tx):
+            return DatabaseMigrationManager.get_applied_migrations(tx)
+
+        entity_types = {}
+        entity_paths = defaultdict(list)
+
+        for pre_name, path in sorted(all_migrations.items()):
+            if pre_name not in applied_migrations:
+                continue
+
+            # Remove file extension.
+            name = pre_name.rsplit('.', maxsplit=1)[0]
+            # Remove prefix.
+            entity_name = name[15:]
+
+            entity_types[entity_name] = self.ENTITY_TYPES[name[13]]
+            entity_paths[entity_name].append(path)
+
+        return entity_types, entity_paths
+
+    @staticmethod
+    def _is_trigger(name):
+        return name.startswith('aftins_') or name.startswith('aftupd_')
+
     def summary(self, args):
         if not self.db.is_initialized():
             return
@@ -175,6 +209,39 @@ class DatabaseManager(Manager):
 
         logger.info(f'Database "{self.db.dbname}" at '
                     f'{self.db.host}:{self.db.port} is OK.')
+
+    def show(self, args):
+        target = args.name
+
+        entity_types, entity_paths = self._entities()
+
+        if target is None:
+            es = sorted(entity_types)
+            es = sorted(es,
+                        key=lambda x: x[7:] if self._is_trigger(x) else x)
+
+            entity_data = []
+
+            for entity_name in es:
+                entity_data.append([entity_name, entity_types[entity_name],
+                                    len(entity_paths[entity_name])])
+
+            print_table(['Name', 'Type', 'Migrations'], entity_data)
+
+            return
+
+        if target not in entity_types:
+            logger.info(f'No entity named "{target}".')
+
+            return
+
+        for path in entity_paths[target]:
+            print('==>', path, '<==')
+
+            with open(path) as f:
+                print(f.read())
+
+            print()
 
 
 class DatabaseMigrationManager(Manager):
