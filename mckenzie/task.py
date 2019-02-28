@@ -3,6 +3,7 @@ from datetime import timedelta
 import logging
 
 from .base import DatabaseView, Manager
+from .database import CheckViolation
 from .util import print_table
 
 
@@ -143,21 +144,25 @@ class TaskManager(Manager):
         priority = args.priority
         name = args.name
 
-        if ' ' in name:
-            logger.error('Task name cannot contain spaces.')
-
-            return
-
         @self.db.tx
         def F(tx):
-            task = tx.execute('''
-                    INSERT INTO task (name, state_id, priority, time_limit,
-                                      mem_limit_mb)
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (name) DO NOTHING
-                    RETURNING id, task_claim(id, %s)
-                    ''', (name, self._ts.rlookup('ts_new'), priority,
-                          time_limit, mem_limit_mb, self.ident))
+            try:
+                task = tx.execute('''
+                        INSERT INTO task (name, state_id, priority, time_limit,
+                                          mem_limit_mb)
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT (name) DO NOTHING
+                        RETURNING id, task_claim(id, %s)
+                        ''', (name, self._ts.rlookup('ts_new'), priority,
+                              time_limit, mem_limit_mb, self.ident))
+            except CheckViolation as e:
+                if e.constraint_name == 'name_spaces':
+                    logger.error('Task name cannot contain spaces.')
+                    tx.rollback()
+
+                    return
+                else:
+                    raise
 
             if len(task) == 0:
                 logger.error(f'Task "{name}" already exists.')

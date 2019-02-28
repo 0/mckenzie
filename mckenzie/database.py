@@ -12,13 +12,31 @@ from .util import print_table
 logger = logging.getLogger(__name__)
 
 
+class DatabaseError(Exception):
+    pass
+
+
+class CheckViolation(DatabaseError):
+    def __init__(self, constraint_name):
+        super().__init__()
+
+        self.constraint_name = constraint_name
+
+
 class Transaction:
     def __init__(self, curs):
         self.curs = curs
 
     def _execute(self, f, *args, **kwargs):
         logger.debug('Executing query.')
-        f(*args, **kwargs)
+
+        try:
+            f(*args, **kwargs)
+        except psycopg2.IntegrityError as e:
+            if e.pgcode == '23514':
+                raise CheckViolation(e.diag.constraint_name)
+            else:
+                raise
 
         try:
             return self.curs.fetchall()
