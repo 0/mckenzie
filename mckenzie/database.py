@@ -232,6 +232,42 @@ class DatabaseMigrationManager(Manager):
 
         return applied_migrations
 
+    @staticmethod
+    def _sanity_check(tx, log=logger.error):
+        tx.savepoint('sanity_check_task')
+
+        try:
+            tx.execute('''
+                    LOCK TABLE task
+                    ''')
+
+            tasks = tx.execute('''
+                    SELECT COUNT(*)
+                    FROM task
+                    WHERE claimed_by IS NOT NULL
+                    ''')
+        except psycopg2.ProgrammingError as e:
+            e_msgs = (
+                'relation "task" does not exist',
+                'column "claimed_by" does not exist',
+            )
+
+            if len(e.args) < 1 or not e.args[0].startswith(e_msgs):
+                raise
+
+            tx.rollback('sanity_check_task')
+        else:
+            num_claimed = tasks[0][0]
+
+            if num_claimed != 0:
+                log('Claimed tasks present.')
+
+                return False
+        finally:
+            tx.release('sanity_check_task')
+
+        return True
+
     def summary(self, args):
         @self.db.tx
         def applied_migrations(tx):
@@ -280,10 +316,23 @@ class DatabaseMigrationManager(Manager):
         print_table(['Name', 'Applied at'], migration_data)
 
     def update(self, args):
+        insane = args.insane
+
+        if not insane:
+            sanity_log = logger.error
+        else:
+            sanity_log = logger.warning
+
         all_migrations = self.get_all_migrations()
 
         @self.db.tx
         def new_migrations(tx):
+            if not self._sanity_check(tx, log=sanity_log):
+                if not insane:
+                    tx.rollback()
+
+                    return []
+
             applied_migrations = self.get_applied_migrations(tx, lock=True)
 
             new_migrations = []

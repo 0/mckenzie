@@ -75,6 +75,7 @@ class McKenzie:
 
         # database migration update
         p_database_migration_update = p_database_migration_sub.add_parser('update', help='apply all pending migrations')
+        p_database_migration_update.add_argument('--insane', action='store_true', help='skip sanity check')
 
         # task
         p_task = p_sub.add_parser('task', help='task management')
