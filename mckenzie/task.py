@@ -1,3 +1,4 @@
+from contextlib import ExitStack
 from datetime import timedelta
 import logging
 
@@ -64,7 +65,46 @@ class TaskReason(DatabaseView):
         return self._dict_r[name]
 
 
+class TaskClaimError(Exception):
+    pass
+
+
+class ClaimStack(ExitStack):
+    def __init__(self, mgr, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.tx_f = mgr.db.tx
+        self.claimed_by = mgr.ident
+
+        self.claimed_ids = set()
+
+    def add(self, task_id):
+        if task_id in self.claimed_ids:
+            return
+
+        self.claimed_ids.add(task_id)
+
+        def F(tx):
+            TaskManager._unclaim(tx, task_id, self.claimed_by)
+
+        self.callback(self.tx_f, F)
+
+
 class TaskManager(Manager):
+    @staticmethod
+    def _claim(tx, task_id, claimed_by):
+        success = tx.callproc('task_claim', (task_id, claimed_by))[0][0]
+
+        if not success:
+            raise TaskClaimError()
+
+    @staticmethod
+    def _unclaim(tx, task_id, claimed_by):
+        success = tx.callproc('task_unclaim', (task_id, claimed_by))[0][0]
+
+        if not success:
+            raise TaskClaimError()
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -113,9 +153,9 @@ class TaskManager(Manager):
                                       mem_limit_mb)
                     VALUES (%s, %s, %s, %s, %s)
                     ON CONFLICT (name) DO NOTHING
-                    RETURNING id
+                    RETURNING id, task_claim(id, %s)
                     ''', (name, self._ts.rlookup('ts_new'), priority,
-                          time_limit, mem_limit_mb))
+                          time_limit, mem_limit_mb, self.ident))
 
             if len(task) == 0:
                 logger.error(f'Task "{name}" already exists.')
@@ -123,12 +163,15 @@ class TaskManager(Manager):
 
                 return
 
-            task_id, = task[0]
+            task_id, _ = task[0]
+
             tx.execute('''
                     INSERT INTO task_history (task_id, state_id, reason_id)
                     VALUES (%s, %s, %s)
                     ''', (task_id, self._ts.rlookup('ts_new'),
                           self._tr.rlookup('tr_task_add_new')))
+
+            self._unclaim(tx, task_id, self.ident)
 
         self.db.tx(F)
 
