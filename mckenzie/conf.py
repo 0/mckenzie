@@ -14,9 +14,9 @@ logger = logging.getLogger(__name__)
 
 class Conf:
     @staticmethod
-    def _get(f, section, option):
+    def _get(f, section, option, **kwargs):
         try:
-            return f(section, option)
+            return f(section, option, **kwargs)
         except (NoOptionError, NoSectionError):
             logger.error(f'Entry "{section}.{option}" must be present.')
 
@@ -67,6 +67,7 @@ class Conf:
 
             raise HandledException()
 
+        # Extract data.
         self.db = Database(self.getstr('database', 'dbname'),
                            self.getstr('database', 'user'),
                            self.getstr('database', 'password'),
