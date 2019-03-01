@@ -47,6 +47,7 @@ class McKenzie:
 
         if global_args:
             p.add_argument('--conf', help='path to configuration file')
+            p.add_argument('--unsafe', action='store_true', help='skip safety checks')
             p.add_argument('-q', '--quiet', action='count', help='decrease verbosity')
             p.add_argument('-v', '--verbose', action='count', help='increase verbosity')
 
@@ -169,17 +170,30 @@ class McKenzie:
             return
 
         mck = McKenzie(conf_path)
+
+        if args.unsafe:
+            mck.unsafe = True
+
         mck.call_manager(args)
 
     def __init__(self, conf_path):
         self.conf = Conf(conf_path)
 
-    def _preflight(self, *, database_init=True, database_update=True):
-        if database_init and not self.conf.db.is_initialized(log=logger.error):
-            return False
+        self.unsafe = False
 
-        if database_update and not self.conf.db.is_updated(log=logger.error):
-            return False
+    def _preflight(self, *, database_init=True, database_update=True):
+        if self.unsafe:
+            log = logger.warning
+        else:
+            log = logger.error
+
+        if database_init and not self.conf.db.is_initialized(log=log):
+            if not self.unsafe:
+                return False
+
+        if database_update and not self.conf.db.is_updated(log=log):
+            if not self.unsafe:
+                return False
 
         return True
 
