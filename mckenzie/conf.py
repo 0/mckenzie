@@ -73,3 +73,11 @@ class Conf:
                            self.getstr('database', 'password'),
                            self.getstr('database', 'host'),
                            self.getint('database', 'port'))
+
+        self.worker_name = self.getstr('worker', 'name')
+        self.worker_chdir = self.getstr('worker', 'chdir')
+        self.worker_mck_cmd = self.getstr('worker', 'mck_cmd')
+        self.worker_mck_args = self.getstr('worker', 'mck_args',
+                                           fallback=None)
+        self.worker_sbatch_args = self.getstr('worker', 'sbatch_args',
+                                              fallback=None)

@@ -301,6 +301,7 @@ class DatabaseMigrationManager(Manager):
 
     @staticmethod
     def _sanity_check(tx, log=logger.error):
+        # Check for claimed tasks.
         tx.savepoint('sanity_check_task')
 
         try:
@@ -332,6 +333,40 @@ class DatabaseMigrationManager(Manager):
                 return False
         finally:
             tx.release('sanity_check_task')
+
+        # Check for workers with jobs.
+        tx.savepoint('sanity_check_worker')
+
+        try:
+            tx.execute('''
+                    LOCK TABLE worker
+                    ''')
+
+            workers = tx.execute('''
+                    SELECT COUNT(*)
+                    FROM worker w
+                    JOIN worker_state ws ON ws.id = w.state_id
+                    WHERE ws.job_exists
+                    ''')
+        except psycopg2.ProgrammingError as e:
+            e_msgs = (
+                'relation "worker" does not exist',
+                'relation "worker_state" does not exist',
+            )
+
+            if len(e.args) < 1 or not e.args[0].startswith(e_msgs):
+                raise
+
+            tx.rollback('sanity_check_worker')
+        else:
+            num_with_job = workers[0][0]
+
+            if num_with_job != 0:
+                log('Workers with jobs present.')
+
+                return False
+        finally:
+            tx.release('sanity_check_worker')
 
         return True
 

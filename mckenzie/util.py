@@ -149,3 +149,41 @@ def print_table(header, data, *, total=None):
             print('| {{:{}{}}} '.format(a, w).format(t), end='')
 
         print('|')
+
+
+def check_proc(proc, *, log):
+    if proc.returncode != 0:
+        log(f'Encountered an error ({proc.returncode}).')
+
+        if proc.stdout:
+            log(proc.stdout.strip())
+
+        if proc.stderr:
+            log(proc.stderr.strip())
+
+        return False
+
+    return True
+
+
+def check_scancel(proc, *, log):
+    if 'scancel: Terminating job' in proc.stderr:
+        return True
+    elif 'scancel: Signal 2 to batch job' in proc.stderr:
+        return True
+    elif 'scancel: Signal 15 to batch job' in proc.stderr:
+        return True
+    elif 'scancel: error: No active jobs match' in proc.stderr:
+        return False
+    elif proc.returncode == 0:
+        return False
+
+    log(f'Encountered an error ({proc.returncode}).')
+
+    if proc.stdout:
+        log(proc.stdout.strip())
+
+    if proc.stderr:
+        log(proc.stderr.strip())
+
+    return None

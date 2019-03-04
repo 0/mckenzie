@@ -8,6 +8,7 @@ from .conf import Conf
 from .database import DatabaseManager, DatabaseMigrationManager
 from .task import TaskManager
 from .util import foreverdict
+from .worker import WorkerManager
 
 # For export.
 from .util import HandledException
@@ -24,6 +25,7 @@ class McKenzie:
         'database': DatabaseManager,
         'database.migration': DatabaseMigrationManager,
         'task': TaskManager,
+        'worker': WorkerManager,
     }
 
     PREFLIGHT_ARGS = defaultdict(dict, {
@@ -109,6 +111,30 @@ class McKenzie:
         p_task_list = p_task_sub.add_parser('list', help='list tasks')
         p_task_list.add_argument('--state', metavar='S', help='only tasks in state S')
         p_task_list.add_argument('--name-pattern', metavar='P', help='only tasks with names matching the SQL LIKE pattern P')
+
+        # worker
+        p_worker = p_sub.add_parser('worker', help='worker management')
+        p_worker_sub = p_worker.add_subparsers(dest='subcommand')
+
+        # worker list
+        p_worker_list = p_worker_sub.add_parser('list', help='list workers')
+        p_worker_list.add_argument('--state', metavar='S', help='only workers in state S')
+
+        # worker quit
+        p_worker_quit = p_worker_sub.add_parser('quit', help='signal worker job to quit')
+        p_worker_quit.add_argument('--abort', action='store_true', help='quit immediately, killing running tasks')
+        p_worker_quit.add_argument('--all', action='store_true', help='signal all worker jobs')
+        p_worker_quit.add_argument('slurm_job_id', nargs='*', type=int, help='Slurm job ID of worker')
+
+        # worker run
+        p_worker_run = p_worker_sub.add_parser('run', help='run worker inside Slurm job')
+
+        # worker spawn
+        p_worker_spawn = p_worker_sub.add_parser('spawn', help='spawn Slurm worker job')
+        p_worker_spawn.add_argument('--cpus', metavar='C', type=int, required=True, help='number of cpus')
+        p_worker_spawn.add_argument('--time', metavar='T', type=float, required=True, help='time limit in hours')
+        p_worker_spawn.add_argument('--mem', metavar='M', type=float, required=True, help='amount of memory in GB')
+        p_worker_spawn.add_argument('--sbatch-args', metavar='SA', help='additional arguments to pass to sbatch')
 
         return p
 
