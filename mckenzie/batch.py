@@ -96,6 +96,7 @@ class BatchManager(Manager):
                 except IndexError:
                     return None
 
+            readline.set_completer_delims(' ')
             readline.set_completer(completer)
             readline.parse_and_bind('tab: complete')
 

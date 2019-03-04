@@ -71,6 +71,25 @@ class TaskManager(Manager):
         if not success:
             raise TaskClaimError()
 
+    @staticmethod
+    def _parse_claim(ident):
+        agent_type_id = (ident & (0xff << 24)) >> 24
+
+        if agent_type_id == 0x01:
+            agent_type = 'manager'
+            agent_id = ident & 0xffff
+        elif agent_type_id == 0x02:
+            agent_type = 'worker'
+            agent_id = ident & 0xffffff
+        else:
+            agent_type = '???'
+            agent_id = ident
+
+        if agent_id is not None:
+            return f'{agent_type} {agent_id}'
+        else:
+            return agent_type
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -324,6 +343,34 @@ class TaskManager(Manager):
                               mem_limit])
 
         print_table(['Name', 'State', 'Dep', 'P', 'Time', 'Mem (MB)'],
+                    task_data)
+
+    def list_claimed(self, args):
+        @self.db.tx
+        def tasks(tx):
+            return tx.execute('''
+                    SELECT name, state_id, claimed_by, claimed_since,
+                           NOW() - claimed_since
+                    FROM task
+                    WHERE claimed_by IS NOT NULL
+                    ORDER BY NOW() - claimed_since
+                    ''')
+
+        if not tasks:
+            logger.info('No claimed tasks found.')
+
+            return
+
+        task_data = []
+
+        for name, state_id, claimed_by, claimed_since, claimed_for in tasks:
+            state_user = self._ts.lookup(state_id, user=True)
+            agent = self._parse_claim(claimed_by)
+
+            task_data.append([name, state_user, agent, claimed_since,
+                              claimed_for])
+
+        print_table(['Name', 'State', 'Claimed by', 'Since', 'For'],
                     task_data)
 
     def release(self, args):

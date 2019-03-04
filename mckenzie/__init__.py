@@ -112,6 +112,9 @@ class McKenzie:
         p_task_list.add_argument('--state', metavar='S', help='only tasks in state S')
         p_task_list.add_argument('--name-pattern', metavar='P', help='only tasks with names matching the SQL LIKE pattern P')
 
+        # task list-claimed
+        p_task_list_claimed = p_task_sub.add_parser('list-claimed', help='list claimed tasks')
+
         # worker
         p_worker = p_sub.add_parser('worker', help='worker management')
         p_worker_sub = p_worker.add_subparsers(dest='subcommand')
@@ -242,6 +245,8 @@ class McKenzie:
 
         if subcmd is None:
             subcmd = 'summary'
+        else:
+            subcmd = subcmd.replace('-', '_')
 
         if not self._preflight(**self.PREFLIGHT_ARGS[mgr_name]):
             return
