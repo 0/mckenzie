@@ -43,6 +43,8 @@ class Worker(Instance):
     TASK_CLEANUP_WAIT_SECONDS = 3
     # 5 minutes
     GIVE_UP_SECONDS = 300
+    # 5 minutes
+    IDLE_MAX_SECONDS = 300
 
     @staticmethod
     def impersonate(slurm_job_id):
@@ -74,6 +76,8 @@ class Worker(Instance):
         self.clean_exit = False
         # Worker is exiting because it was asked to abort.
         self.done_due_to_abort = False
+        # Worker is exiting because it was idle for too long.
+        self.done_due_to_idle = False
 
         # Futures currently executing.
         self.fut_pending = set()
@@ -87,6 +91,9 @@ class Worker(Instance):
 
         # Expected maximum memory usage of running tasks.
         self.task_mems_mb = {}
+
+        # If there's a lack of tasks, when it began.
+        self.idle_start = None
 
     @property
     def remaining_time(self):
@@ -195,6 +202,9 @@ class Worker(Instance):
                 if task is None:
                     break
 
+                # Reset the idle timer.
+                self.idle_start = None
+
                 task_id, task_name, task_mem_mb = task
 
                 task_starts[task_name] = datetime.now()
@@ -281,8 +291,19 @@ class Worker(Instance):
             elif self.quitting:
                 self.done = True
             else:
-                # Take a break.
-                sleep(self.TASK_WAIT_SECONDS)
+                if self.idle_start is None:
+                    # Start the idle timer.
+                    self.idle_start = datetime.now()
+
+                idle_sec = (datetime.now() - self.idle_start).total_seconds()
+
+                if idle_sec > self.IDLE_MAX_SECONDS:
+                    self.quit()
+                    self.done = True
+                    self.done_due_to_idle = True
+                else:
+                    # Take a break.
+                    sleep(self.TASK_WAIT_SECONDS)
 
     def run(self):
         with futures.ThreadPoolExecutor(max_workers=self.worker_cpus) as pool:
@@ -680,6 +701,8 @@ class WorkerManager(Manager):
 
                 if worker.done_due_to_abort:
                     reason_id = self._wr.rlookup('wr_success_abort')
+                elif worker.done_due_to_idle:
+                    reason_id = self._wr.rlookup('wr_success_idle')
                 else:
                     reason_id = self._wr.rlookup('wr_success')
 
