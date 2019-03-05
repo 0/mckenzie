@@ -19,20 +19,26 @@ class DatabaseReasonView(DatabaseView):
 
         # Mapping from names to IDs.
         self._dict_r = {}
+        # Mapping from IDs to descriptions.
+        self._dict_d = {}
 
         @self.db.tx
         def reasons(tx):
             return tx.execute(f'''
-                    SELECT id, name
+                    SELECT id, name, description
                     FROM {table_name}
                     ORDER BY id
                     ''')
 
-        for reason_id, name in reasons:
+        for reason_id, name, description in reasons:
             self._dict_r[name] = reason_id
+            self._dict_d[reason_id] = description
 
     def rlookup(self, name):
         return self._dict_r[name]
+
+    def dlookup(self, reason_id):
+        return self._dict_d[reason_id]
 
 
 class DatabaseStateView(DatabaseView):

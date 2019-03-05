@@ -115,6 +115,10 @@ class McKenzie:
         # task list-claimed
         p_task_list_claimed = p_task_sub.add_parser('list-claimed', help='list claimed tasks')
 
+        # task show
+        p_task_show = p_task_sub.add_parser('show', help='show task details')
+        p_task_show.add_argument('name', help='task name')
+
         # worker
         p_worker = p_sub.add_parser('worker', help='worker management')
         p_worker_sub = p_worker.add_subparsers(dest='subcommand')

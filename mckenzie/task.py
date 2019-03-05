@@ -4,7 +4,7 @@ import logging
 
 from .base import DatabaseReasonView, DatabaseStateView, Manager
 from .database import CheckViolation
-from .util import print_table
+from .util import format_datetime, format_timedelta, print_table
 
 
 logger = logging.getLogger(__name__)
@@ -446,3 +446,116 @@ class TaskManager(Manager):
                                   self._tr.rlookup('tr_task_release')))
 
                 logger.info(task_name)
+
+    def show(self, args):
+        name = args.name
+
+        @self.db.tx
+        def task(tx):
+            return tx.execute('''
+                    SELECT id, claimed_by, claimed_since, NOW() - claimed_since
+                    FROM task
+                    WHERE name = %s
+                    ''', (name,))
+
+        if len(task) == 0:
+            logger.error(f'Task "{name}" does not exist.')
+
+            return
+
+        task_id, claimed_by, claimed_since, claimed_for = task[0]
+
+        @self.db.tx
+        def task_history(tx):
+            return tx.execute('''
+                    SELECT state_id, time,
+                           LEAD(time, 1, NOW()) OVER (ORDER BY time, id),
+                           reason_id, worker_id
+                    FROM task_history
+                    WHERE task_id = %s
+                    ORDER BY id
+                    ''', (task_id,))
+
+        task_data = []
+
+        for state_id, time, time_next, reason_id, worker_id in task_history:
+            state_user = self._ts.lookup(state_id, user=True)
+            reason_desc = self._tr.dlookup(reason_id)
+
+            duration = time_next - time
+
+            if worker_id is not None:
+                worker_id = str(worker_id)
+            else:
+                worker_id = ''
+
+            task_data.append([time, duration, state_user, reason_desc,
+                              worker_id])
+
+        if task_data:
+            print_table(['Time', 'Duration', 'State', 'Reason', 'Worker'],
+                        task_data)
+        else:
+            print('No state history.')
+
+        print()
+
+        @self.db.tx
+        def worker_task(tx):
+            return tx.execute('''
+                    SELECT worker_id, time_active, time_inactive,
+                           NOW() - time_active
+                    FROM worker_task
+                    WHERE task_id = %s
+                    ORDER BY id
+                    ''', (task_id,))
+
+        task_data = []
+
+        for worker_id, time_active, time_inactive, time_since in worker_task:
+            if time_inactive is not None:
+                duration = time_inactive - time_active
+            else:
+                duration = time_since
+
+            task_data.append([str(worker_id), time_active, time_inactive,
+                              duration])
+
+        if task_data:
+            print_table(['Worker', 'Active at', 'Inactive at', 'Duration'],
+                        task_data)
+        else:
+            print('No worker activity.')
+
+        print()
+
+        @self.db.tx
+        def task_dependency(tx):
+            return tx.execute('''
+                    SELECT t.name, t.state_id
+                    FROM task_dependency td
+                    JOIN task t ON t.id = td.dependency_id
+                    WHERE td.task_id = %s
+                    ORDER BY t.id
+                    ''', (task_id,))
+
+        task_data = []
+
+        for dependency_name, state_id in task_dependency:
+            state_user = self._ts.lookup(state_id, user=True)
+
+            task_data.append([dependency_name, state_user])
+
+        if task_data:
+            print_table(['Dependency', 'State'], task_data)
+        else:
+            print('No dependencies.')
+
+        print()
+
+        if claimed_by is not None:
+            print(f'Claimed by "{self._parse_claim(claimed_by)}" since '
+                  f'{format_datetime(claimed_since)} '
+                  f'(for {format_timedelta(claimed_for)}).')
+        else:
+            print('Not claimed.')
