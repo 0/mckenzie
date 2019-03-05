@@ -279,7 +279,7 @@ class DatabaseMigrationManager(Manager):
                         ''')
 
             migrations.extend(tx.execute('''
-                        SELECT name, applied_at
+                        SELECT name, sha256_digest, applied_at
                         FROM database_migration
                         '''))
         except psycopg2.ProgrammingError as e:
@@ -294,8 +294,8 @@ class DatabaseMigrationManager(Manager):
 
         applied_migrations = {}
 
-        for name, applied_at in migrations:
-            applied_migrations[name] = applied_at
+        for name, sha256_digest, applied_at in migrations:
+            applied_migrations[name] = sha256_digest, applied_at
 
         return applied_migrations
 
@@ -400,6 +400,32 @@ class DatabaseMigrationManager(Manager):
 
         print_table(['State', 'Count'], migration_data, total=('Total', (1,)))
 
+    def check(self, args):
+        @self.db.tx
+        def applied_migrations(tx):
+            return self.get_applied_migrations(tx)
+
+        migration_data = []
+
+        for name, path in sorted(self.get_all_migrations().items()):
+            try:
+                sha256_digest_db, applied_at = applied_migrations[name]
+            except KeyError:
+                continue
+
+            with open(path) as f:
+                migration_file_data = f.read()
+
+            migration_encoded = migration_file_data.encode('utf-8')
+            sha256_hash = hashlib.sha256(migration_encoded)
+            sha256_digest = sha256_hash.hexdigest()
+
+            check = 'OK' if sha256_digest == sha256_digest_db else 'NOT OK'
+
+            migration_data.append([name, check])
+
+        print_table(['Name', 'Check'], migration_data)
+
     def list(self, args):
         @self.db.tx
         def applied_migrations(tx):
@@ -409,7 +435,7 @@ class DatabaseMigrationManager(Manager):
 
         for name in sorted(self.get_all_migrations()):
             try:
-                applied_at = applied_migrations[name]
+                sha256_digest, applied_at = applied_migrations[name]
             except KeyError:
                 applied_at = ''
 

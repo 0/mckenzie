@@ -73,6 +73,9 @@ class McKenzie:
         p_database_migration = p_database_sub.add_parser('migration', help='migration management')
         p_database_migration_sub = p_database_migration.add_subparsers(dest='subsubcommand')
 
+        # database migration check
+        p_database_migration_check = p_database_migration_sub.add_parser('check', help='check migrations')
+
         # database migration list
         p_database_migration_list = p_database_migration_sub.add_parser('list', help='list migrations')
 
