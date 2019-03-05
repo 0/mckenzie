@@ -147,6 +147,10 @@ class McKenzie:
         # worker run
         p_worker_run = p_worker_sub.add_parser('run', help='run worker inside Slurm job')
 
+        # worker show
+        p_worker_show = p_worker_sub.add_parser('show', help='show worker details')
+        p_worker_show.add_argument('slurm_job_id', type=int, help='Slurm job ID of worker')
+
         # worker spawn
         p_worker_spawn = p_worker_sub.add_parser('spawn', help='spawn Slurm worker job')
         p_worker_spawn.add_argument('--cpus', metavar='C', type=int, required=True, help='number of cpus')

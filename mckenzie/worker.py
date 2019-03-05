@@ -697,6 +697,64 @@ class WorkerManager(Manager):
                         VALUES (%s, %s, %s)
                         ''', (slurm_job_id, state_id, reason_id))
 
+    def show(self, args):
+        slurm_job_id = args.slurm_job_id
+
+        @self.db.tx
+        def worker_history(tx):
+            return tx.execute('''
+                    SELECT state_id, time,
+                           LEAD(time, 1, NOW()) OVER (ORDER BY time, id),
+                           reason_id
+                    FROM worker_history
+                    WHERE worker_id = %s
+                    ORDER BY id
+                    ''', (slurm_job_id,))
+
+        worker_data = []
+
+        for state_id, time, time_next, reason_id in worker_history:
+            state_user = self._ws.lookup(state_id, user=True)
+            reason_desc = self._wr.dlookup(reason_id)
+
+            duration = time_next - time
+
+            worker_data.append([time, duration, state_user, reason_desc])
+
+        if worker_data:
+            print_table(['Time', 'Duration', 'State', 'Reason'], worker_data)
+        else:
+            print('No state history.')
+
+        print()
+
+        @self.db.tx
+        def worker_task(tx):
+            return tx.execute('''
+                    SELECT t.name, wt.time_active, wt.time_inactive,
+                           NOW() - wt.time_active
+                    FROM worker_task wt
+                    JOIN task t ON t.id = wt.task_id
+                    WHERE wt.worker_id = %s
+                    ORDER BY wt.id
+                    ''', (slurm_job_id,))
+
+        task_data = []
+
+        for task_name, time_active, time_inactive, time_since in worker_task:
+            if time_inactive is not None:
+                duration = time_inactive - time_active
+            else:
+                duration = time_since
+
+            task_data.append([task_name, time_active, time_inactive, duration])
+
+        if task_data:
+            print_table(['Task', 'Active at', 'Inactive at', 'Duration'],
+                        task_data)
+        else:
+            print('No worker tasks.')
+
     def spawn(self, args):
         worker_cpus = args.cpus
         worker_time_hours = args.time
