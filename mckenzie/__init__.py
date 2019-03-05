@@ -157,6 +157,7 @@ class McKenzie:
         p_worker_spawn.add_argument('--time', metavar='T', type=float, required=True, help='time limit in hours')
         p_worker_spawn.add_argument('--mem', metavar='M', type=float, required=True, help='amount of memory in GB')
         p_worker_spawn.add_argument('--sbatch-args', metavar='SA', help='additional arguments to pass to sbatch')
+        p_worker_spawn.add_argument('--num', type=int, default=1, help='number of workers to spawn (default: 1)')
 
         return p
 

@@ -783,6 +783,12 @@ class WorkerManager(Manager):
         worker_time_hours = args.time
         worker_mem_gb = args.mem
         sbatch_args = args.sbatch_args
+        num = args.num
+
+        if num < 1:
+            logger.error('Must spawn at least 1 worker.')
+
+            return
 
         worker_time_minutes = ceil(worker_time_hours * 60)
         worker_mem_mb = ceil(worker_mem_gb * 1024)
@@ -810,6 +816,8 @@ class WorkerManager(Manager):
         else:
             mck_args = ''
 
+        os.makedirs(self.conf.worker_chdir, exist_ok=True)
+
         script = f'''
                 #!/bin/bash
 
@@ -817,41 +825,41 @@ class WorkerManager(Manager):
                 exec {mck_cmd} {mck_args} worker run
                 '''
 
-        proc = subprocess.run(proc_args, input=script.strip(),
-                              capture_output=True, text=True)
+        for _ in range(num):
+            proc = subprocess.run(proc_args, input=script.strip(),
+                                  capture_output=True, text=True)
 
-        if not check_proc(proc, log=logger.error):
-            return
+            if not check_proc(proc, log=logger.error):
+                return
 
-        if ';' in proc.stdout:
-            # Ignore the cluster name.
-            slurm_job_id = int(proc.stdout.split(';', maxsplit=1)[0])
-        else:
-            slurm_job_id = int(proc.stdout)
+            if ';' in proc.stdout:
+                # Ignore the cluster name.
+                slurm_job_id = int(proc.stdout.split(';', maxsplit=1)[0])
+            else:
+                slurm_job_id = int(proc.stdout)
 
-        worker_time = timedelta(hours=worker_time_hours)
+            worker_time = timedelta(hours=worker_time_hours)
 
-        @self.db.tx
-        def F(tx):
-            tx.execute('''
-                    INSERT INTO worker (id, state_id, num_cores, time_limit,
-                                        mem_limit_mb)
-                    VALUES (%s, %s, %s, %s, %s)
-                    ''', (slurm_job_id, self._ws.rlookup('ws_queued'),
-                          worker_cpus, worker_time, worker_mem_mb))
+            @self.db.tx
+            def F(tx):
+                tx.execute('''
+                        INSERT INTO worker (id, state_id, num_cores,
+                                            time_limit, mem_limit_mb)
+                        VALUES (%s, %s, %s, %s, %s)
+                        ''', (slurm_job_id, self._ws.rlookup('ws_queued'),
+                              worker_cpus, worker_time, worker_mem_mb))
 
-            tx.execute('''
-                    INSERT INTO worker_history (worker_id, state_id, reason_id)
-                    VALUES (%s, %s, %s)
-                    ''', (slurm_job_id, self._ws.rlookup('ws_queued'),
-                          self._wr.rlookup('wr_worker_spawn')))
+                tx.execute('''
+                        INSERT INTO worker_history (worker_id, state_id,
+                                                    reason_id)
+                        VALUES (%s, %s, %s)
+                        ''', (slurm_job_id, self._ws.rlookup('ws_queued'),
+                              self._wr.rlookup('wr_worker_spawn')))
 
-        os.makedirs(self.conf.worker_chdir, exist_ok=True)
+            proc = subprocess.run(['scontrol', 'release', str(slurm_job_id)],
+                                  capture_output=True, text=True)
 
-        proc = subprocess.run(['scontrol', 'release', str(slurm_job_id)],
-                              capture_output=True, text=True)
+            if not check_proc(proc, log=logger.error):
+                return
 
-        if not check_proc(proc, log=logger.error):
-            return
-
-        logger.info(slurm_job_id)
+            logger.info(slurm_job_id)
