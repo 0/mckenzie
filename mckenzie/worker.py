@@ -44,6 +44,11 @@ class Worker(Instance):
     # 5 minutes
     GIVE_UP_SECONDS = 300
 
+    @staticmethod
+    def impersonate(slurm_job_id):
+        # 00000010 SSSSSSSS SSSSSSSS SSSSSSSS
+        return (0x02 << 24) | (slurm_job_id & 0xffffff)
+
     def __init__(self, slurm_job_id, worker_cpus, worker_mem_mb,
                  time_end_projected, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -53,8 +58,7 @@ class Worker(Instance):
         self.worker_mem_mb = worker_mem_mb
         self.time_end_projected = time_end_projected
 
-        # 00000010 SSSSSSSS SSSSSSSS SSSSSSSS
-        self._ident = (0x02 << 24) | (self.slurm_job_id & 0xffffff)
+        self._ident = self.impersonate(self.slurm_job_id)
 
         self.lock = threading.Lock()
 
@@ -338,12 +342,17 @@ class WorkerManager(Manager):
     EXIT_BUFFER_SECONDS = 180
     # 2 minutes
     END_SIGNAL_SECONDS = 120
+    # 2 minutes
+    HEARTBEAT_TIMEOUT_SECONDS = 120
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self._ws = WorkerState(self.db)
         self._wr = WorkerReason(self.db)
+
+        self._ts = TaskState(self.db)
+        self._tr = TaskReason(self.db)
 
     def summary(self, args):
         @self.db.tx
@@ -368,6 +377,130 @@ class WorkerManager(Manager):
 
         print_table(['State', 'Count'], worker_data,
                     total=('Total', (1, 2)))
+
+    def clean(self, args):
+        state_name = args.state
+
+        if state_name is not None:
+            try:
+                state_id = self._ws.rlookup(state_name, user=True)
+            except KeyError:
+                logger.error(f'Invalid state "{state_name}".')
+
+                return
+        else:
+            state_id = None
+
+        ok_worker_ids = []
+
+        while True:
+            @self.db.tx
+            def result(tx):
+                query = '''
+                        SELECT w.id, w.state_id
+                        FROM worker w
+                        JOIN worker_state ws ON ws.id = w.state_id
+                        WHERE ws.job_exists
+                        AND COALESCE(worker_timeout(w, %s), TRUE)
+                        AND w.id != ALL (%s)
+                        '''
+                td = timedelta(seconds=self.HEARTBEAT_TIMEOUT_SECONDS)
+                query_args = (td, ok_worker_ids)
+
+                if state_id is not None:
+                    query += ' AND w.state_id = %s'
+                    query_args += (state_id,)
+
+                query += '''
+                        ORDER BY w.id
+                        LIMIT 1
+                        FOR UPDATE OF w SKIP LOCKED
+                        '''
+
+                worker = tx.execute(query, query_args)
+
+                if len(worker) == 0:
+                    return None
+
+                slurm_job_id, worker_state_id = worker[0]
+                ident = Worker.impersonate(slurm_job_id)
+                state = self._ws.lookup(worker_state_id)
+                state_user = self._ws.lookup(worker_state_id, user=True)
+
+                if state == 'ws_queued':
+                    reason_id = self._wr.rlookup('wr_worker_clean_queued')
+                elif state == 'ws_running':
+                    reason_id = self._wr.rlookup('wr_worker_clean_running')
+                else:
+                    logger.error(f'Worker {slurm_job_id} is in state '
+                                 f'"{state_user}".')
+
+                    return None
+
+                proc = subprocess.run(['squeue', '--noheader',
+                                       '--jobs='+str(slurm_job_id)],
+                                      capture_output=True, text=True)
+
+                if proc.returncode == 0 and proc.stdout:
+                    ok_worker_ids.append(slurm_job_id)
+
+                    return False
+
+                worker_tasks = tx.execute('''
+                        SELECT t.id, t.name, t.claimed_by
+                        FROM worker_task wt
+                        JOIN task t ON t.id = wt.task_id
+                        WHERE wt.worker_id = %s
+                        AND wt.active
+                        ORDER BY t.id
+                        FOR UPDATE OF t
+                        ''', (slurm_job_id,))
+
+                task_names = []
+
+                for task_id, task_name, claimed_by in worker_tasks:
+                    if claimed_by != ident:
+                        logger.warning(f'Task "{task_name}" was not claimed '
+                                       f'by worker {slurm_job_id}.')
+
+                    tx.execute('''
+                            INSERT INTO task_history (task_id, state_id,
+                                                      reason_id)
+                            VALUES (%s, %s, %s)
+                            ''', (task_id, self._ts.rlookup('ts_failed'),
+                                  self._tr.rlookup('tr_failure_worker_clean')))
+
+                    TaskManager._unclaim(tx, task_id, None, force=True)
+
+                    task_names.append(task_name)
+
+                tx.execute('''
+                        UPDATE worker
+                        SET time_end = heartbeat
+                        WHERE id = %s
+                        AND time_start IS NOT NULL
+                        ''', (slurm_job_id,))
+
+                tx.execute('''
+                        INSERT INTO worker_history (worker_id, state_id,
+                                                    reason_id)
+                        VALUES (%s, %s, %s)
+                        ''', (slurm_job_id, self._ws.rlookup('ws_failed'),
+                              reason_id))
+
+                return slurm_job_id, task_names
+
+            if result is None:
+                break
+            elif not result:
+                continue
+
+            slurm_job_id, task_names = result
+
+            logger.info(slurm_job_id)
+
+            for task_name in task_names:
+                logger.info(f' {task_name}')
 
     def list(self, args):
         state_name = args.state

@@ -130,6 +130,10 @@ class McKenzie:
         p_worker = p_sub.add_parser('worker', help='worker management')
         p_worker_sub = p_worker.add_subparsers(dest='subcommand')
 
+        # worker clean
+        p_worker_clean = p_worker_sub.add_parser('clean', help='clean up dead workers')
+        p_worker_clean.add_argument('--state', metavar='S', help='only workers in state S')
+
         # worker list
         p_worker_list = p_worker_sub.add_parser('list', help='list workers')
         p_worker_list.add_argument('--state', metavar='S', help='only workers in state S')
