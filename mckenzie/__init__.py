@@ -110,6 +110,10 @@ class McKenzie:
         p_task_release.add_argument('--all', action='store_true', help='try to release all held tasks in addition to named tasks')
         p_task_release.add_argument('name', nargs='*', help='task name')
 
+        # task reset-claimed
+        p_task_reset_claimed = p_task_sub.add_parser('reset-claimed', help='unclaim abandoned tasks')
+        p_task_reset_claimed.add_argument('name', nargs='*', help='task name')
+
         # task list
         p_task_list = p_task_sub.add_parser('list', help='list tasks')
         p_task_list.add_argument('--state', metavar='S', help='only tasks in state S')

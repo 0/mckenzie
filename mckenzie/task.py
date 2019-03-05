@@ -65,8 +65,9 @@ class TaskManager(Manager):
             raise TaskClaimError()
 
     @staticmethod
-    def _unclaim(tx, task_id, claimed_by):
-        success = tx.callproc('task_unclaim', (task_id, claimed_by))[0][0]
+    def _unclaim(tx, task_id, claimed_by, *, force=False):
+        success = tx.callproc('task_unclaim',
+                              (task_id, claimed_by, force))[0][0]
 
         if not success:
             raise TaskClaimError()
@@ -446,6 +447,31 @@ class TaskManager(Manager):
                                   self._tr.rlookup('tr_task_release')))
 
                 logger.info(task_name)
+
+    def reset_claimed(self, args):
+        names = args.name
+
+        for task_name in names:
+            @self.db.tx
+            def task(tx):
+                return tx.execute('''
+                        SELECT id
+                        FROM task
+                        WHERE name = %s
+                        ''', (task_name,))
+
+            if len(task) == 0:
+                logger.warning(f'Task "{task_name}" does not exist.')
+
+                continue
+
+            task_id, = task[0]
+
+            @self.db.tx
+            def F(tx):
+                self._unclaim(tx, task_id, None, force=True)
+
+            logger.info(task_name)
 
     def show(self, args):
         name = args.name
