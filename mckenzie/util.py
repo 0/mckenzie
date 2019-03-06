@@ -60,7 +60,19 @@ RIGHT_ALIGNS = set([
 ])
 
 
-def print_table(header, data, *, total=None):
+def print_table(pre_header, data, *, total=None):
+    # Convert all header entries to tuples.
+    header = []
+
+    for heading in pre_header:
+        if isinstance(heading, tuple):
+            header.append(heading)
+        else:
+            header.append((heading, 1))
+
+    num_rows = len(data)
+    num_cols = sum(heading[1] for heading in header)
+
     # Format data.
     data_str = []
 
@@ -74,7 +86,7 @@ def print_table(header, data, *, total=None):
         data_str.append(row_str)
 
     # Determine alignments.
-    if len(data) > 0:
+    if num_rows > 0:
         row = data[0]
         aligns = ['>' if type(elem) in RIGHT_ALIGNS else '<' for elem in row]
     else:
@@ -84,7 +96,7 @@ def print_table(header, data, *, total=None):
     if total is not None:
         total_row = []
 
-        for col_idx in range(len(header)):
+        for col_idx in range(num_cols):
             tot = None
 
             if col_idx == 0:
@@ -94,7 +106,7 @@ def print_table(header, data, *, total=None):
                 for row in data:
                     elem = row[col_idx]
 
-                    if elem is None:
+                    if elem is None or isinstance(elem, str):
                         continue
 
                     if tot is None:
@@ -105,8 +117,8 @@ def print_table(header, data, *, total=None):
             format_f = FORMAT_FUNCTIONS[type(tot)]
             total_row.append(format_f(tot))
 
-    # Compute column widths.
-    max_widths = [len(x) for x in header]
+    # Compute column widths and separators.
+    max_widths = [0 for _ in range(num_cols)]
 
     for row in data_str:
         for col_idx, elem in enumerate(row):
@@ -122,31 +134,56 @@ def print_table(header, data, *, total=None):
             if max_widths[col_idx] < width:
                 max_widths[col_idx] = width
 
+    first_subcols = []
+    paddings = []
+    max_widths_header = []
+    idx = 0
+
+    for heading, cols in header:
+        data_width = sum(max_widths[idx:(idx+cols)]) + 3 * (cols - 1)
+
+        if data_width >= len(heading):
+            max_widths_header.append(data_width)
+            paddings.append(0)
+        else:
+            max_widths_header.append(len(heading))
+            paddings.append(len(heading) - data_width)
+
+        first_subcols.append(True)
+        first_subcols.extend([False] * (cols-1))
+        paddings.extend([0] * (cols-1))
+
+        idx += cols
+
     # Output table.
-    for t, w in zip(header, max_widths):
-        print('| {{:{}}} '.format(w).format(t), end='')
+    for (t, _), w in zip(header, max_widths_header):
+        print('| {{:<{}}} '.format(w).format(t), end='')
 
     print('|')
 
-    for w in max_widths:
-        print('+-{{:{}}}-'.format(w).format('-'*w), end='')
+    for w in max_widths_header:
+        print('+-{{:<{}}}-'.format(w).format('-'*w), end='')
 
     print('+')
 
     for row in data_str:
-        for t, a, w in zip(row, aligns, max_widths):
-            print('| {{:{}{}}} '.format(a, w).format(t), end='')
+        for t, f, p, a, w in zip(row, first_subcols, paddings, aligns,
+                                 max_widths):
+            s = '|' if f else '/'
+            print('{} {}{{:{}{}}} '.format(s, ' ' * p, a, w).format(t), end='')
 
         print('|')
 
     if total is not None:
-        for w in max_widths:
-            print('+-{{:{}}}-'.format(w).format('-'*w), end='')
+        for w in max_widths_header:
+            print('+-{{:<{}}}-'.format(w).format('-'*w), end='')
 
         print('+')
 
-        for t, a, w in zip(total_row, aligns, max_widths):
-            print('| {{:{}{}}} '.format(a, w).format(t), end='')
+        for t, f, p, a, w in zip(total_row, first_subcols, paddings, aligns,
+                                 max_widths):
+            s = '|' if f else '/'
+            print('{} {}{{:{}{}}} '.format(s, ' ' * p, a, w).format(t), end='')
 
         print('|')
 

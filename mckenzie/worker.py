@@ -366,6 +366,9 @@ class WorkerManager(Manager):
     # 2 minutes
     HEARTBEAT_TIMEOUT_SECONDS = 120
 
+    STATE_ORDER = ['queued', 'running', 'running (Q)', 'running (?)',
+                   'failed (!)', 'cancelled', 'done']
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -375,14 +378,33 @@ class WorkerManager(Manager):
         self._ts = TaskState(self.db)
         self._tr = TaskReason(self.db)
 
+    def _format_state(self, state_id, quitting, timeout):
+        state = self._ws.lookup(state_id)
+        state_user = self._ws.lookup(state_id, user=True)
+
+        if state == 'ws_running' and timeout:
+            state_user += ' (?)'
+        elif state == 'ws_running' and quitting:
+            state_user += ' (Q)'
+        elif state == 'ws_failed':
+            state_user += ' (!)'
+
+        return state, state_user
+
     def summary(self, args):
         @self.db.tx
         def workers(tx):
+            td = timedelta(seconds=self.HEARTBEAT_TIMEOUT_SECONDS)
+
             return tx.execute('''
-                    SELECT state_id, COUNT(*)
+                    SELECT state_id, worker_timeout(worker, %s) AS timeout,
+                           quitting, SUM(num_cores),
+                           SUM(num_cores * time_limit),
+                           SUM(num_cores * (time_start + time_limit - NOW())),
+                           COUNT(*)
                     FROM worker
-                    GROUP BY state_id
-                    ''')
+                    GROUP BY state_id, timeout, quitting
+                    ''', (td,))
 
         if not workers:
             logger.info('No workers found.')
@@ -391,13 +413,24 @@ class WorkerManager(Manager):
 
         worker_data = []
 
-        for state_id, count in workers:
-            state_user = self._ws.lookup(state_id, user=True)
+        for (state_id, timeout, quitting, num_tasks, total_time,
+                remaining_time, count) in workers:
+            state, state_user = self._format_state(state_id, quitting, timeout)
 
-            worker_data.append([state_user, count])
+            if state == 'ws_queued':
+                time = total_time
+            elif state == 'ws_running':
+                time = remaining_time
+            else:
+                num_tasks = None
+                time = None
 
-        print_table(['State', 'Count'], worker_data,
-                    total=('Total', (1, 2)))
+            worker_data.append([state_user, count, num_tasks, time])
+
+        sorted_data = sorted(worker_data,
+                             key=lambda row: self.STATE_ORDER.index(row[0]))
+        print_table(['State', 'Count', 'Tasks', 'Remaining time'], sorted_data,
+                    total=('Total', (1, 2, 3)))
 
     def clean(self, args):
         state_name = args.state
@@ -539,27 +572,71 @@ class WorkerManager(Manager):
         @self.db.tx
         def workers(tx):
             query = '''
-                    SELECT id, state_id
-                    FROM worker
+                    SELECT w.id, w.state_id, ws.job_exists, w.num_cores,
+                           w.time_limit, w.mem_limit_mb, w.node, w.time_start,
+                           worker_timeout(w, %s), w.time_end, w.quitting,
+                           w.num_tasks, w.num_tasks_active, w.cur_mem_usage_mb,
+                           NOW() - w.time_start
+                    FROM worker w
+                    JOIN worker_state ws ON ws.id = w.state_id
                     '''
-            query_args = ()
+            td = timedelta(seconds=self.HEARTBEAT_TIMEOUT_SECONDS)
+            query_args = (td,)
 
             if state_id is not None:
-                query += ' WHERE state_id = %s'
+                query += ' WHERE w.state_id = %s'
                 query_args += (state_id,)
+            else:
+                query += ' WHERE ws.job_exists OR w.state_id = %s'
+                query_args += (self._ws.rlookup('ws_failed'),)
 
-            query += ' ORDER BY id'
+            # Order by remaining time, then ID.
+            query += ' ORDER BY w.time_start + w.time_limit - NOW(), w.id'
 
             return tx.execute(query, query_args)
 
         worker_data = []
 
-        for slurm_job_id, state_id in workers:
-            state_user = self._ws.lookup(state_id, user=True)
+        for (slurm_job_id, state_id, job_exists, num_cores, time_limit,
+                mem_limit_mb, node, time_start, timeout, time_end, quitting,
+                num_tasks, num_tasks_active, cur_mem_usage_mb,
+                elapsed_time) in workers:
+            state, state_user = self._format_state(state_id, quitting, timeout)
 
-            worker_data.append([str(slurm_job_id), state_user])
+            remaining_time = '-'
 
-        print_table(['Job ID', 'State'], worker_data)
+            if job_exists:
+                if time_start is None:
+                    remaining_time = time_limit
+                elif time_end is None:
+                    remaining_time = time_limit - elapsed_time
+
+            if state == 'ws_running':
+                tasks_running_show = num_tasks_active
+                tasks_frac = num_tasks_active / num_cores
+                tasks_percent = f'{ceil(tasks_frac * 100)}%'
+            else:
+                tasks_running_show = '-'
+                tasks_percent = '-'
+
+            mem_limit_gb = ceil(mem_limit_mb / 1024)
+
+            if state == 'ws_running' and cur_mem_usage_mb is not None:
+                cur_mem_usage_gb = ceil(cur_mem_usage_mb / 1024)
+                cur_mem_usage_frac = cur_mem_usage_mb / mem_limit_mb
+                cur_mem_usage_percent = f'{ceil(cur_mem_usage_frac * 100)}%'
+            else:
+                cur_mem_usage_gb = '-'
+                cur_mem_usage_percent = '-'
+
+            worker_data.append([str(slurm_job_id), state_user, remaining_time,
+                                time_limit, tasks_running_show, num_cores,
+                                tasks_percent, num_tasks, cur_mem_usage_gb,
+                                mem_limit_gb, cur_mem_usage_percent])
+
+        print_table(['Job ID', 'State', ('Time (R/T)', 2),
+                     ('Tasks (R/C/%/T)', 4), ('Mem (GB;U/T/%)', 3)],
+                    worker_data)
 
     def quit(self, args):
         abort = args.abort

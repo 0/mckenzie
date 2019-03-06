@@ -57,6 +57,9 @@ class ClaimStack(ExitStack):
 
 
 class TaskManager(Manager):
+    STATE_ORDER = ['new', 'held', 'waiting', 'ready', 'running', 'failed (!)',
+                   'done']
+
     @staticmethod
     def _claim(tx, task_id, claimed_by):
         success = tx.callproc('task_claim', (task_id, claimed_by))[0][0]
@@ -97,11 +100,21 @@ class TaskManager(Manager):
         self._ts = TaskState(self.db)
         self._tr = TaskReason(self.db)
 
+    def _format_state(self, state_id):
+        state = self._ts.lookup(state_id)
+        state_user = self._ts.lookup(state_id, user=True)
+
+        if state == 'ts_failed':
+            state_user += ' (!)'
+
+        return state, state_user
+
     def summary(self, args):
         @self.db.tx
         def tasks(tx):
             return tx.execute('''
-                    SELECT state_id, SUM(time_limit), COUNT(*)
+                    SELECT state_id, SUM(time_limit), SUM(elapsed_time),
+                           COUNT(*)
                     FROM task
                     GROUP BY state_id
                     ''')
@@ -113,12 +126,19 @@ class TaskManager(Manager):
 
         task_data = []
 
-        for state_id, time_limit, count in tasks:
-            state_user = self._ts.lookup(state_id, user=True)
+        for state_id, time_limit, elapsed_time, count in tasks:
+            state, state_user = self._format_state(state_id)
 
-            task_data.append([state_user, count, time_limit])
+            if state == 'ts_done':
+                time = elapsed_time
+            else:
+                time = time_limit
 
-        print_table(['State', 'Count', 'Total time'], task_data,
+            task_data.append([state_user, count, time])
+
+        sorted_data = sorted(task_data,
+                             key=lambda row: self.STATE_ORDER.index(row[0]))
+        print_table(['State', 'Count', 'Total time'], sorted_data,
                     total=('Total', (1, 2)))
 
     def add(self, args):
@@ -336,9 +356,12 @@ class TaskManager(Manager):
 
         for (name, state_id, priority, time_limit, mem_limit, num_dep,
                 num_dep_pend) in tasks:
-            state_user = self._ts.lookup(state_id, user=True)
+            state, state_user = self._format_state(state_id)
 
-            dep = f'{num_dep-num_dep_pend}/{num_dep}'
+            if num_dep > 0:
+                dep = f'{num_dep-num_dep_pend}/{num_dep}'
+            else:
+                dep = ''
 
             task_data.append([name, state_user, dep, priority, time_limit,
                               mem_limit])
