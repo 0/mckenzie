@@ -1,10 +1,11 @@
 from contextlib import ExitStack
 from datetime import timedelta
 import logging
+import subprocess
 
 from .base import DatabaseReasonView, DatabaseStateView, Manager
 from .database import CheckViolation
-from .util import format_datetime, format_timedelta, print_table
+from .util import check_proc, format_datetime, format_timedelta, print_table
 
 
 logger = logging.getLogger(__name__)
@@ -16,9 +17,9 @@ logger = logging.getLogger(__name__)
 #       ^  |      ^         ^
 #       |  v      |         |
 # new ->+->+-> waiting -> ready -> running -> done
-#                                     |
-#                                     v
-#                                  failed
+#                 ^                   |
+#                 |                   v
+#                 +<-------------- failed
 
 
 class TaskState(DatabaseStateView):
@@ -108,6 +109,16 @@ class TaskManager(Manager):
             state_user += ' (!)'
 
         return state, state_user
+
+    def _clean(self, task_name):
+        if self.conf.task_cleanup_cmd is None:
+            return True
+
+        proc = subprocess.run([self.conf.task_cleanup_cmd, task_name],
+                              cwd=self.conf.general_chdir,
+                              capture_output=True, text=True)
+
+        return check_proc(proc, log=logger.error)
 
     def summary(self, args):
         @self.db.tx
@@ -231,6 +242,51 @@ class TaskManager(Manager):
                     ''', (task_id, state_id, reason_id))
 
             self._unclaim(tx, task_id, self.ident)
+
+    def clean(self, args):
+        names = args.name
+
+        if self.conf.task_cleanup_cmd is None:
+            logger.warning('No cleanup command defined.')
+
+            return
+
+        for task_name in names:
+            @self.db.tx
+            def task(tx):
+                return tx.execute('''
+                        SELECT id, state_id, task_claim(id, %s)
+                        FROM task
+                        WHERE name = %s
+                        ''', (self.ident, task_name))
+
+            if len(task) == 0:
+                logger.warning(f'Task "{task_name}" does not exist.')
+
+                continue
+
+            task_id, state_id, claim_success = task[0]
+            state = self._ts.lookup(state_id)
+            state_user = self._ts.lookup(state_id, user=True)
+
+            if not claim_success:
+                logger.warning(f'Task "{task_name}" could not be claimed.')
+
+                continue
+
+            with ClaimStack(self) as cs:
+                cs.add(task_id)
+
+                if state in ['ts_running', 'ts_done']:
+                    logger.warning(f'Task "{task_name}" is in state '
+                                   f'"{state_user}".')
+
+                    continue
+
+                logger.info(task_name)
+
+                if not self._clean(task_name):
+                    return
 
     def hold(self, args):
         all_tasks = args.all
@@ -495,6 +551,42 @@ class TaskManager(Manager):
                 self._unclaim(tx, task_id, None, force=True)
 
             logger.info(task_name)
+
+    def reset_failed(self, args):
+        skip_clean = args.skip_clean
+
+        with ClaimStack(self) as cs:
+            @self.db.tx
+            def tasks(tx):
+                return tx.execute('''
+                        WITH failed_tasks AS (
+                            SELECT id, name
+                            FROM task
+                            WHERE state_id = %s
+                            FOR UPDATE
+                        )
+                        SELECT id, name
+                        FROM failed_tasks
+                        WHERE task_claim(id, %s)
+                        ''', (self._ts.rlookup('ts_failed'), self.ident))
+
+            for task_id, task_name in tasks:
+                cs.add(task_id)
+
+            for task_id, task_name in tasks:
+                logger.info(task_name)
+
+                if not skip_clean and not self._clean(task_name):
+                    return
+
+                @self.db.tx
+                def F(tx):
+                    tx.execute('''
+                            INSERT INTO task_history (task_id, state_id,
+                                                      reason_id)
+                            VALUES (%s, %s, %s)
+                            ''', (task_id, self._ts.rlookup('ts_waiting'),
+                                  self._tr.rlookup('tr_task_reset_failed')))
 
     def show(self, args):
         name = args.name

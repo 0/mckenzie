@@ -100,6 +100,10 @@ class McKenzie:
         p_task_add.add_argument('--depends-on', metavar='DEP', action='append', help='make DEP a dependency of the new task')
         p_task_add.add_argument('name', help='name for the new task')
 
+        # task clean
+        p_task_clean = p_task_sub.add_parser('clean', help='run cleanup command')
+        p_task_clean.add_argument('name', nargs='*', help='task name')
+
         # task hold
         p_task_hold = p_task_sub.add_parser('hold', help='change task state to "held"')
         p_task_hold.add_argument('--all', action='store_true', help='try to hold all possible tasks in addition to named tasks')
@@ -121,6 +125,10 @@ class McKenzie:
 
         # task list-claimed
         p_task_list_claimed = p_task_sub.add_parser('list-claimed', help='list claimed tasks')
+
+        # task reset-failed
+        p_task_reset_failed = p_task_sub.add_parser('reset-failed', help='reset all failed tasks to "waiting"')
+        p_task_reset_failed.add_argument('--skip-clean', action='store_true', help='skip the cleanup step')
 
         # task show
         p_task_show = p_task_sub.add_parser('show', help='show task details')

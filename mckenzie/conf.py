@@ -76,6 +76,9 @@ class Conf:
                            self.getstr('database', 'host'),
                            self.getint('database', 'port'))
 
+        self.task_cleanup_cmd = self.getstr('task', 'cleanup_cmd',
+                                            fallback=None)
+
         self.worker_name = self.getstr('worker', 'name')
         self.worker_mck_cmd = self.getstr('worker', 'mck_cmd')
         self.worker_mck_args = self.getstr('worker', 'mck_args',
