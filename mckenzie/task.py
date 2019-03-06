@@ -118,15 +118,20 @@ class TaskManager(Manager):
 
         return state, state_user
 
-    def _clean(self, task_name):
-        if self.conf.task_cleanup_cmd is None:
+    def _run_cmd(self, cmd, *args):
+        if cmd is None:
             return True
 
-        proc = subprocess.run([self.conf.task_cleanup_cmd, task_name],
-                              cwd=self.conf.general_chdir,
+        proc = subprocess.run((cmd,) + args, cwd=self.conf.general_chdir,
                               capture_output=True, text=True)
 
         return check_proc(proc, log=logger.error)
+
+    def _clean(self, task_name):
+        return self._run_cmd(self.conf.task_cleanup_cmd, task_name)
+
+    def _unsynthesize(self, task_name):
+        return self._run_cmd(self.conf.task_unsynthesize_cmd, task_name)
 
     def summary(self, args):
         @self.db.tx
@@ -783,5 +788,55 @@ class TaskManager(Manager):
                     tx.execute('''
                             UPDATE task
                             SET synthesized = TRUE
+                            WHERE id = %s
+                            ''', (task_id,))
+
+    def unsynthesize(self, args):
+        names = args.name
+
+        if self.conf.task_unsynthesize_cmd is None:
+            logger.warning('No unsynthesis command defined.')
+
+            return
+
+        for task_name in names:
+            @self.db.tx
+            def task(tx):
+                return tx.execute('''
+                        SELECT id, name, synthesized, task_claim(id, %s)
+                        FROM task
+                        WHERE name = %s
+                        ''', (self.ident, task_name))
+
+            if len(task) == 0:
+                logger.warning(f'Task "{task_name}" does not exist.')
+
+                continue
+
+            task_id, task_name, synthesized, claim_success = task[0]
+
+            if not claim_success:
+                logger.warning(f'Task "{task_name}" could not be claimed.')
+
+                continue
+
+            with ClaimStack(self) as cs:
+                cs.add(task_id)
+
+                if not synthesized:
+                    logger.warning(f'Task "{task_name}" is not synthesized.')
+
+                    continue
+
+                logger.info(task_name)
+
+                if not self._unsynthesize(task_name):
+                    return
+
+                @self.db.tx
+                def F(tx):
+                    tx.execute('''
+                            UPDATE task
+                            SET synthesized = FALSE
                             WHERE id = %s
                             ''', (task_id,))

@@ -80,6 +80,8 @@ class Conf:
                                             fallback=None)
         self.task_synthesize_cmd = self.getstr('task', 'synthesize_cmd',
                                                fallback=None)
+        self.task_unsynthesize_cmd = self.getstr('task', 'unsynthesize_cmd',
+                                                 fallback=None)
 
         self.worker_name = self.getstr('worker', 'name')
         self.worker_mck_cmd = self.getstr('worker', 'mck_cmd')

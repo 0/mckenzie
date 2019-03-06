@@ -138,6 +138,10 @@ class McKenzie:
         p_task_synthesize = p_task_sub.add_parser('synthesize', help='synthesize completed tasks')
         p_task_synthesize.add_argument('--forever', action='store_true', help='wait for more tasks when done')
 
+        # task unsynthesize
+        p_task_unsynthesize = p_task_sub.add_parser('unsynthesize', help='unsynthesize tasks')
+        p_task_unsynthesize.add_argument('name', nargs='*', help='task name')
+
         # worker
         p_worker = p_sub.add_parser('worker', help='worker management')
         p_worker_sub = p_worker.add_subparsers(dest='subcommand')
