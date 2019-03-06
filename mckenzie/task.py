@@ -1,7 +1,10 @@
 from contextlib import ExitStack
 from datetime import timedelta
 import logging
+import os
+import signal
 import subprocess
+from threading import Event
 
 from .base import DatabaseReasonView, DatabaseStateView, Manager
 from .database import CheckViolation
@@ -58,8 +61,11 @@ class ClaimStack(ExitStack):
 
 
 class TaskManager(Manager):
+    # 1 minute
+    SYNTHESIZE_WAIT_SECONDS = 60
+
     STATE_ORDER = ['new', 'held', 'waiting', 'ready', 'running', 'failed (!)',
-                   'done']
+                   'done (!)', 'done']
 
     @staticmethod
     def _claim(tx, task_id, claimed_by):
@@ -101,11 +107,13 @@ class TaskManager(Manager):
         self._ts = TaskState(self.db)
         self._tr = TaskReason(self.db)
 
-    def _format_state(self, state_id):
+    def _format_state(self, state_id, synthesized):
         state = self._ts.lookup(state_id)
         state_user = self._ts.lookup(state_id, user=True)
 
         if state == 'ts_failed':
+            state_user += ' (!)'
+        elif state == 'ts_done' and not synthesized:
             state_user += ' (!)'
 
         return state, state_user
@@ -124,10 +132,10 @@ class TaskManager(Manager):
         @self.db.tx
         def tasks(tx):
             return tx.execute('''
-                    SELECT state_id, SUM(time_limit), SUM(elapsed_time),
-                           COUNT(*)
+                    SELECT state_id, synthesized, SUM(time_limit),
+                           SUM(elapsed_time), COUNT(*)
                     FROM task
-                    GROUP BY state_id
+                    GROUP BY state_id, synthesized
                     ''')
 
         if not tasks:
@@ -137,8 +145,8 @@ class TaskManager(Manager):
 
         task_data = []
 
-        for state_id, time_limit, elapsed_time, count in tasks:
-            state, state_user = self._format_state(state_id)
+        for state_id, synthesized, time_limit, elapsed_time, count in tasks:
+            state, state_user = self._format_state(state_id, synthesized)
 
             if state == 'ts_done':
                 time = elapsed_time
@@ -387,7 +395,8 @@ class TaskManager(Manager):
         def tasks(tx):
             query = '''
                     SELECT name, state_id, priority, time_limit, mem_limit_mb,
-                           num_dependencies, num_dependencies_pending
+                           num_dependencies, num_dependencies_pending,
+                           synthesized
                     FROM task
                     '''
             query_args = ()
@@ -411,8 +420,8 @@ class TaskManager(Manager):
         task_data = []
 
         for (name, state_id, priority, time_limit, mem_limit, num_dep,
-                num_dep_pend) in tasks:
-            state, state_user = self._format_state(state_id)
+                num_dep_pend, synthesized) in tasks:
+            state, state_user = self._format_state(state_id, synthesized)
 
             if num_dep > 0:
                 dep = f'{num_dep-num_dep_pend}/{num_dep}'
@@ -700,3 +709,79 @@ class TaskManager(Manager):
                   f'(for {format_timedelta(claimed_for)}).')
         else:
             print('Not claimed.')
+
+    def synthesize(self, args):
+        forever = args.forever
+
+        if self.conf.task_synthesize_cmd is None:
+            logger.warning('No synthesis command defined.')
+
+            return
+
+        done = Event()
+
+        def quit(signum=None, frame=None):
+            done.set()
+
+        signal.signal(signal.SIGINT, quit)
+
+        while not done.is_set():
+            @self.db.tx
+            def task(tx):
+                return tx.execute('''
+                        WITH unsynthesized_task AS (
+                            SELECT id, name, elapsed_time, max_mem_mb
+                            FROM task
+                            WHERE state_id = %s
+                            AND NOT synthesized
+                            AND claimed_by IS NULL
+                            LIMIT 1
+                            FOR UPDATE SKIP LOCKED
+                        )
+                        SELECT id, name, elapsed_time, max_mem_mb,
+                               task_claim(id, %s)
+                        FROM unsynthesized_task
+                        ''', (self._ts.rlookup('ts_done'), self.ident))
+
+            if len(task) == 0:
+                if forever:
+                    done.wait(self.SYNTHESIZE_WAIT_SECONDS)
+                else:
+                    quit()
+
+                continue
+
+            (task_id, task_name, elapsed_time, max_mem_mb,
+                    claim_success) = task[0]
+
+            if not claim_success:
+                continue
+
+            with ClaimStack(self) as cs:
+                cs.add(task_id)
+
+                logger.info(task_name)
+
+                elapsed_time_hours = elapsed_time.total_seconds() / 3600
+                max_mem_gb = max_mem_mb / 1024
+
+                proc = subprocess.run([self.mck.conf.task_synthesize_cmd,
+                                       task_name, str(elapsed_time_hours),
+                                       str(max_mem_gb)],
+                                      cwd=self.conf.general_chdir,
+                                      capture_output=True, text=True,
+                                      # Prevent the child process from
+                                      # receiving any signals sent to this
+                                      # process.
+                                      preexec_fn=os.setpgrp)
+
+                if not check_proc(proc, log=logger.error):
+                    return
+
+                @self.db.tx
+                def F(tx):
+                    tx.execute('''
+                            UPDATE task
+                            SET synthesized = TRUE
+                            WHERE id = %s
+                            ''', (task_id,))

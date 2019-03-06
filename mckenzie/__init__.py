@@ -134,6 +134,10 @@ class McKenzie:
         p_task_show = p_task_sub.add_parser('show', help='show task details')
         p_task_show.add_argument('name', help='task name')
 
+        # task synthesize
+        p_task_synthesize = p_task_sub.add_parser('synthesize', help='synthesize completed tasks')
+        p_task_synthesize.add_argument('--forever', action='store_true', help='wait for more tasks when done')
+
         # worker
         p_worker = p_sub.add_parser('worker', help='worker management')
         p_worker_sub = p_worker.add_subparsers(dest='subcommand')
