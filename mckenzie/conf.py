@@ -79,5 +79,7 @@ class Conf:
         self.worker_mck_cmd = self.getstr('worker', 'mck_cmd')
         self.worker_mck_args = self.getstr('worker', 'mck_args',
                                            fallback=None)
+        self.worker_execute_cmd = self.getstr('worker', 'execute_cmd')
+        self.worker_success_string = self.getstr('worker', 'success_string')
         self.worker_sbatch_args = self.getstr('worker', 'sbatch_args',
                                               fallback=None)

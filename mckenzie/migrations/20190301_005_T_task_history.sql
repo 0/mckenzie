@@ -1,0 +1,2 @@
+ALTER TABLE task_history
+ADD COLUMN IF NOT EXISTS worker_id INTEGER REFERENCES worker;

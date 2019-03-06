@@ -15,7 +15,10 @@ logger = logging.getLogger(__name__)
 #       held <----+<--------+
 #       ^  |      ^         ^
 #       |  v      |         |
-# new ->+->+-> waiting -> ready
+# new ->+->+-> waiting -> ready -> running -> done
+#                                     |
+#                                     v
+#                                  failed
 
 
 class TaskState(DatabaseStateView):

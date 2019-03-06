@@ -10,6 +10,7 @@ import threading
 from time import sleep
 
 from .base import DatabaseReasonView, DatabaseStateView, Instance, Manager
+from .task import TaskManager, TaskReason, TaskState
 from .util import check_proc, check_scancel, print_table
 
 
@@ -57,6 +58,9 @@ class Worker(Instance):
 
         self.lock = threading.Lock()
 
+        self._ts = TaskState(self.db)
+        self._tr = TaskReason(self.db)
+
         # All the tasks have finished (or will be killed) and worker can exit.
         self.done = False
         # Worker will be done when all the running tasks have finished.
@@ -72,8 +76,13 @@ class Worker(Instance):
         # PIDs currently executing.
         self.running_pids = set()
 
+        # Task IDs.
+        self.fut_ids = {}
         # Task names.
         self.fut_names = {}
+
+        # Expected maximum memory usage of running tasks.
+        self.task_mems_mb = {}
 
     @property
     def remaining_time(self):
@@ -103,8 +112,48 @@ class Worker(Instance):
         self.done = True
         self.done_due_to_abort = True
 
+    def _choose_task(self):
+        remaining_mem_mb = self.worker_mem_mb - sum(self.task_mems_mb.values())
+
+        @self.db.tx
+        def task(tx):
+            return tx.execute('''
+                    WITH chosen_task AS (
+                        SELECT id, name, mem_limit_mb
+                        FROM task
+                        WHERE state_id = %s
+                        AND claimed_by IS NULL
+                        AND time_limit < %s
+                        AND mem_limit_mb < %s
+                        ORDER BY priority DESC, mem_limit_mb DESC,
+                                 time_limit DESC
+                        LIMIT 1
+                        FOR UPDATE SKIP LOCKED
+                    )
+                    SELECT id, name, mem_limit_mb
+                    FROM chosen_task
+                    WHERE task_claim(id, %s)
+                    ''', (self._ts.rlookup('ts_ready'), self.remaining_time,
+                          remaining_mem_mb, self.ident))
+
+        if len(task) == 0:
+            return None
+
+        task_id, task_name, task_mem_mb = task[0]
+
+        @self.db.tx
+        def F(tx):
+            tx.execute('''
+                    INSERT INTO task_history (task_id, state_id, reason_id,
+                                              worker_id)
+                    VALUES (%s, %s, %s, %s)
+                    ''', (task_id, self._ts.rlookup('ts_running'),
+                          self._tr.rlookup('tr_running'), self.slurm_job_id))
+
+        return task_id, task_name, task_mem_mb
+
     def _execute_task(self, task_name):
-        args = ['sleep', task_name]
+        args = [self.conf.worker_execute_cmd, task_name]
         p = subprocess.Popen(args, stdout=subprocess.PIPE, text=True,
                              # If the child process spawns its own processes,
                              # we can reliably kill the entire process group
@@ -126,6 +175,8 @@ class Worker(Instance):
         return success, p.stdout.read(), int(wait_usage.ru_maxrss)
 
     def _run(self, pool):
+        task_starts = {}
+
         while not self.done:
             if self.remaining_time.total_seconds() < self.GIVE_UP_SECONDS:
                 # Too little time remaining in job, so we will not take on any
@@ -135,14 +186,21 @@ class Worker(Instance):
             # Fill up with tasks.
             while (not self.quitting
                     and len(self.fut_pending) < self.worker_cpus):
-                # Generate a random amount of time to sleep.
-                from random import randint
-                task_name = str(randint(2, 120))
+                task = self._choose_task()
+
+                if task is None:
+                    break
+
+                task_id, task_name, task_mem_mb = task
+
+                task_starts[task_name] = datetime.now()
+                self.task_mems_mb[task_name] = task_mem_mb
 
                 logger.debug(f'Submitting task "{task_name}" to the pool.')
                 fut = pool.submit(self._execute_task, task_name)
 
                 self.fut_pending.add(fut)
+                self.fut_ids[fut] = task_id
                 self.fut_names[fut] = task_name
 
             # Update the status.
@@ -150,9 +208,11 @@ class Worker(Instance):
             def F(tx):
                 tx.execute('''
                         UPDATE worker
-                        SET heartbeat = NOW()
+                        SET heartbeat = NOW(),
+                            cur_mem_usage_mb = %s
                         WHERE id = %s
-                        ''', (self.slurm_job_id,))
+                        ''', (sum(self.task_mems_mb.values()),
+                              self.slurm_job_id))
 
             if self.fut_pending:
                 # Wait for running tasks.
@@ -163,12 +223,57 @@ class Worker(Instance):
 
                 # Handle completed tasks.
                 for fut in fut_done:
+                    task_id = self.fut_ids.pop(fut)
                     task_name = self.fut_names.pop(fut)
 
                     success, output, max_mem_kb = fut.result()
-                    logger.debug(f'"{task_name}": {success} "{output}" '
-                                 f'({max_mem_kb} KB)')
+                    max_mem_mb = max_mem_kb / 1024
 
+                    if success:
+                        output = output.split('\n')
+
+                        while output and output[-1] == '':
+                            output.pop()
+
+                        ss = self.conf.worker_success_string
+
+                        if not (output and output[-1] == ss):
+                            success = False
+                            reason_id = self._tr.rlookup('tr_failure_string')
+                        else:
+                            reason_id = self._tr.rlookup('tr_success')
+                    else:
+                        reason_id = self._tr.rlookup('tr_failure_exit_code')
+
+                    if success:
+                        state_id = self._ts.rlookup('ts_done')
+                    else:
+                        state_id = self._ts.rlookup('ts_failed')
+
+                    logger.debug(f'"{task_name}": {success}')
+
+                    duration = datetime.now() - task_starts[task_name]
+
+                    @self.db.tx
+                    def F(tx):
+                        tx.execute('''
+                                UPDATE task
+                                SET elapsed_time = %s,
+                                    max_mem_mb = %s
+                                WHERE id = %s
+                                ''', (duration, max_mem_mb, task_id))
+
+                        tx.execute('''
+                                INSERT INTO task_history (task_id, state_id,
+                                                          reason_id, worker_id)
+                                VALUES (%s, %s, %s, %s)
+                                ''', (task_id, state_id, reason_id,
+                                      self.slurm_job_id))
+
+                        TaskManager._unclaim(tx, task_id, self.ident)
+
+                    task_starts.pop(task_name)
+                    self.task_mems_mb.pop(task_name)
             elif self.quitting:
                 self.done = True
             else:
@@ -207,9 +312,22 @@ class Worker(Instance):
                 fut_done, self.fut_pending = r
 
                 for fut in fut_done:
+                    task_id = self.fut_ids.pop(fut)
                     task_name = self.fut_names.pop(fut)
 
                     logger.debug(f'Task "{task_name}" was aborted.')
+
+                    @self.db.tx
+                    def F(tx):
+                        tx.execute('''
+                                INSERT INTO task_history (task_id, state_id,
+                                                          reason_id, worker_id)
+                                VALUES (%s, %s, %s, %s)
+                                ''', (task_id, self._ts.rlookup('ts_failed'),
+                                      self._tr.rlookup('tr_failure_abort'),
+                                      self.slurm_job_id))
+
+                        TaskManager._unclaim(tx, task_id, self.ident)
 
         self.clean_exit = True
         logger.debug('Left pool normally.')
@@ -385,7 +503,8 @@ class WorkerManager(Manager):
                     UPDATE worker
                     SET node = %s,
                         time_start = NOW(),
-                        heartbeat = NOW()
+                        heartbeat = NOW(),
+                        cur_mem_usage_mb = 0
                     WHERE id = %s
                     ''', (worker_node, slurm_job_id))
 

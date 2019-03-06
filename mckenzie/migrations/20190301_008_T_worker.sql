@@ -1,0 +1,18 @@
+ALTER TABLE worker
+DROP CONSTRAINT IF EXISTS num_tasks;
+
+ALTER TABLE worker
+ADD COLUMN IF NOT EXISTS num_tasks INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN IF NOT EXISTS num_tasks_active INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN IF NOT EXISTS cur_mem_usage_mb INTEGER,
+ADD CONSTRAINT num_tasks CHECK (num_tasks_active <= num_tasks);
+
+
+DROP TRIGGER IF EXISTS befupd_worker
+ON worker;
+
+CREATE TRIGGER befupd_worker
+BEFORE UPDATE
+ON worker
+FOR EACH ROW
+EXECUTE PROCEDURE befupd_worker();

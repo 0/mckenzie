@@ -198,7 +198,7 @@ class DatabaseManager(Manager):
 
     @staticmethod
     def _is_trigger(name):
-        return name.startswith('aftins_') or name.startswith('aftupd_')
+        return name.startswith(('aftins_', 'aftupd_', 'befupd_'))
 
     def summary(self, args):
         if not self.db.is_initialized():
