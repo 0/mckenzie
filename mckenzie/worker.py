@@ -367,7 +367,7 @@ class WorkerManager(Manager):
     HEARTBEAT_TIMEOUT_SECONDS = 120
 
     STATE_ORDER = ['queued', 'running', 'running (Q)', 'running (?)',
-                   'failed (!)', 'cancelled', 'done']
+                   'failed (!)', 'failed', 'cancelled', 'done']
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -378,7 +378,7 @@ class WorkerManager(Manager):
         self._ts = TaskState(self.db)
         self._tr = TaskReason(self.db)
 
-    def _format_state(self, state_id, quitting, timeout):
+    def _format_state(self, state_id, quitting, timeout, failure_acknowledged):
         state = self._ws.lookup(state_id)
         state_user = self._ws.lookup(state_id, user=True)
 
@@ -386,7 +386,7 @@ class WorkerManager(Manager):
             state_user += ' (?)'
         elif state == 'ws_running' and quitting:
             state_user += ' (Q)'
-        elif state == 'ws_failed':
+        elif state == 'ws_failed' and not failure_acknowledged:
             state_user += ' (!)'
 
         return state, state_user
@@ -398,12 +398,12 @@ class WorkerManager(Manager):
 
             return tx.execute('''
                     SELECT state_id, worker_timeout(worker, %s) AS timeout,
-                           quitting, SUM(num_cores),
+                           quitting, failure_acknowledged, SUM(num_cores),
                            SUM(num_cores * time_limit),
                            SUM(num_cores * (time_start + time_limit - NOW())),
                            COUNT(*)
                     FROM worker
-                    GROUP BY state_id, timeout, quitting
+                    GROUP BY state_id, timeout, quitting, failure_acknowledged
                     ''', (td,))
 
         if not workers:
@@ -413,9 +413,10 @@ class WorkerManager(Manager):
 
         worker_data = []
 
-        for (state_id, timeout, quitting, num_tasks, total_time,
-                remaining_time, count) in workers:
-            state, state_user = self._format_state(state_id, quitting, timeout)
+        for (state_id, timeout, quitting, failure_acknowledged, num_tasks,
+                total_time, remaining_time, count) in workers:
+            state, state_user = self._format_state(state_id, quitting, timeout,
+                                                   failure_acknowledged)
 
             if state == 'ws_queued':
                 time = total_time
@@ -431,6 +432,20 @@ class WorkerManager(Manager):
                              key=lambda row: self.STATE_ORDER.index(row[0]))
         print_table(['State', 'Count', 'Tasks', 'Remaining time'], sorted_data,
                     total=('Total', (1, 2, 3)))
+
+    def ack_failed(self, args):
+        @self.db.tx
+        def workers(tx):
+            return tx.execute('''
+                    UPDATE worker
+                    SET failure_acknowledged = TRUE
+                    WHERE state_id = %s
+                    AND failure_acknowledged = FALSE
+                    RETURNING id
+                    ''', (self._ws.rlookup('ws_failed'),))
+
+        for slurm_job_id, in workers:
+            logger.info(slurm_job_id)
 
     def clean(self, args):
         state_name = args.state
@@ -575,7 +590,8 @@ class WorkerManager(Manager):
                     SELECT w.id, w.state_id, ws.job_exists, w.num_cores,
                            w.time_limit, w.mem_limit_mb, w.node, w.time_start,
                            worker_timeout(w, %s), w.time_end, w.quitting,
-                           w.num_tasks, w.num_tasks_active, w.cur_mem_usage_mb,
+                           w.failure_acknowledged, w.num_tasks,
+                           w.num_tasks_active, w.cur_mem_usage_mb,
                            NOW() - w.time_start
                     FROM worker w
                     JOIN worker_state ws ON ws.id = w.state_id
@@ -587,7 +603,11 @@ class WorkerManager(Manager):
                 query += ' WHERE w.state_id = %s'
                 query_args += (state_id,)
             else:
-                query += ' WHERE ws.job_exists OR w.state_id = %s'
+                query += '''
+                        WHERE ws.job_exists
+                        OR (w.state_id = %s
+                            AND NOT w.failure_acknowledged)
+                        '''
                 query_args += (self._ws.rlookup('ws_failed'),)
 
             # Order by remaining time, then ID.
@@ -599,9 +619,10 @@ class WorkerManager(Manager):
 
         for (slurm_job_id, state_id, job_exists, num_cores, time_limit,
                 mem_limit_mb, node, time_start, timeout, time_end, quitting,
-                num_tasks, num_tasks_active, cur_mem_usage_mb,
-                elapsed_time) in workers:
-            state, state_user = self._format_state(state_id, quitting, timeout)
+                failure_acknowledged, num_tasks, num_tasks_active,
+                cur_mem_usage_mb, elapsed_time) in workers:
+            state, state_user = self._format_state(state_id, quitting, timeout,
+                                                   failure_acknowledged)
 
             remaining_time = '-'
 
