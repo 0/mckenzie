@@ -142,6 +142,7 @@ class McKenzie:
         p_worker_quit = p_worker_sub.add_parser('quit', help='signal worker job to quit')
         p_worker_quit.add_argument('--abort', action='store_true', help='quit immediately, killing running tasks')
         p_worker_quit.add_argument('--all', action='store_true', help='signal all worker jobs')
+        p_worker_quit.add_argument('--state', metavar='S', help='only workers in state S when using --all')
         p_worker_quit.add_argument('slurm_job_id', nargs='*', type=int, help='Slurm job ID of worker')
 
         # worker run

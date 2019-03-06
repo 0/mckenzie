@@ -641,6 +641,7 @@ class WorkerManager(Manager):
     def quit(self, args):
         abort = args.abort
         all_workers = args.all
+        state_name = args.state
         slurm_job_ids = set(args.slurm_job_id)
 
         if abort:
@@ -648,16 +649,33 @@ class WorkerManager(Manager):
         else:
             signal = 'INT'
 
+        if state_name is not None:
+            try:
+                state_id = self._ws.rlookup(state_name, user=True)
+            except KeyError:
+                logger.error(f'Invalid state "{state_name}".')
+
+                return
+        else:
+            state_id = None
+
         if all_workers:
             @self.db.tx
             def workers(tx):
                 # All workers with jobs.
-                return tx.execute('''
+                query = '''
                         SELECT w.id
                         FROM worker w
                         JOIN worker_state ws ON ws.id = w.state_id
                         WHERE ws.job_exists
-                        ''')
+                        '''
+                query_args = ()
+
+                if state_id is not None:
+                    query += ' AND w.state_id = %s'
+                    query_args += (state_id,)
+
+                return tx.execute(query, query_args)
 
             for slurm_job_id, in workers:
                 slurm_job_ids.add(slurm_job_id)
