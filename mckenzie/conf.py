@@ -68,6 +68,8 @@ class Conf:
             raise HandledException()
 
         # Extract data.
+        self.general_chdir = Path(self.getstr('general', 'chdir'))
+
         self.db = Database(self.getstr('database', 'dbname'),
                            self.getstr('database', 'user'),
                            self.getstr('database', 'password'),
@@ -75,7 +77,6 @@ class Conf:
                            self.getint('database', 'port'))
 
         self.worker_name = self.getstr('worker', 'name')
-        self.worker_chdir = self.getstr('worker', 'chdir')
         self.worker_mck_cmd = self.getstr('worker', 'mck_cmd')
         self.worker_mck_args = self.getstr('worker', 'mck_args',
                                            fallback=None)

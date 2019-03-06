@@ -914,7 +914,7 @@ class WorkerManager(Manager):
         proc_args.append('--hold')
         proc_args.append('--parsable')
         proc_args.append('--signal=B:TERM@' + str(self.END_SIGNAL_SECONDS))
-        proc_args.append('--chdir=' + self.conf.worker_chdir)
+        proc_args.append('--chdir=' + str(self.conf.general_chdir))
         proc_args.append('--cpus-per-task=' + str(worker_cpus))
         proc_args.append('--time=' + str(worker_time_minutes))
         proc_args.append('--mem=' + str(worker_mem_mb))
@@ -932,7 +932,7 @@ class WorkerManager(Manager):
         else:
             mck_args = ''
 
-        os.makedirs(self.conf.worker_chdir, exist_ok=True)
+        os.makedirs(self.conf.general_chdir, exist_ok=True)
 
         script = f'''
                 #!/bin/bash
