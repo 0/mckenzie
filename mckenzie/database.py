@@ -1,4 +1,6 @@
 from collections import defaultdict
+from contextlib import contextmanager
+from enum import Enum, IntEnum
 import hashlib
 import logging
 import os
@@ -22,6 +24,16 @@ class CheckViolation(DatabaseError):
         super().__init__()
 
         self.constraint_name = constraint_name
+
+
+class AdvisoryKey(IntEnum):
+    """
+    Advisory lock key values.
+    """
+
+    # Accessing the task_dependency table. Shared lock for reading, exclusive
+    # lock for writing.
+    TASK_DEPENDENCY_ACCESS = 1001
 
 
 class Transaction:
@@ -64,6 +76,34 @@ class Transaction:
             self.execute(f'ROLLBACK TO SAVEPOINT {name}')
         else:
             self.curs.connection.rollback()
+
+    def _advisory_do(self, action, key, *, shared=False):
+        name_pieces = ['pg', 'advisory', '{}']
+
+        if shared:
+            name_pieces.append('shared')
+
+        name_template = '_'.join(name_pieces)
+
+        if isinstance(key, Enum):
+            key = key.value
+
+        self.callproc(name_template.format(action), (key,))
+
+    def advisory_lock(self, *args, **kwargs):
+        self._advisory_do('lock', *args, **kwargs)
+
+    def advisory_unlock(self, *args, **kwargs):
+        self._advisory_do('unlock', *args, **kwargs)
+
+    @contextmanager
+    def advisory(self, *args, **kwargs):
+        self.advisory_lock(*args, **kwargs)
+
+        try:
+            yield
+        finally:
+            self.advisory_unlock(*args, **kwargs)
 
 
 class Database:
@@ -109,6 +149,19 @@ class Database:
                         logger.debug('Retrying transaction.')
                         tx.rollback()
                         retries_left -= 1
+
+    @contextmanager
+    def advisory(self, *args, **kwargs):
+        @self.tx
+        def F(tx):
+            tx.advisory_lock(*args, **kwargs)
+
+        try:
+            yield
+        finally:
+            @self.tx
+            def F(tx):
+                tx.advisory_unlock(*args, **kwargs)
 
     def is_initialized(self, *, log=logger.info):
         try:

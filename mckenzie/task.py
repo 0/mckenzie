@@ -7,7 +7,7 @@ import subprocess
 from threading import Event
 
 from .base import DatabaseReasonView, DatabaseStateView, Manager
-from .database import CheckViolation
+from .database import AdvisoryKey, CheckViolation
 from .util import check_proc, format_datetime, format_timedelta, print_table
 
 
@@ -219,35 +219,36 @@ class TaskManager(Manager):
                     ''', (task_id, self._ts.rlookup('ts_new'),
                           self._tr.rlookup('tr_task_add_new')))
 
-            for dependency_name in dependency_names:
-                dependency = tx.execute('''
-                        SELECT id
-                        FROM task
-                        WHERE name = %s
-                        ''', (dependency_name,))
+            with tx.advisory(AdvisoryKey.TASK_DEPENDENCY_ACCESS):
+                for dependency_name in dependency_names:
+                    dependency = tx.execute('''
+                            SELECT id
+                            FROM task
+                            WHERE name = %s
+                            ''', (dependency_name,))
 
-                if len(dependency) == 0:
-                    logger.error(f'No such task "{dependency_name}".')
-                    tx.rollback()
-
-                    return
-
-                dependency_id, = dependency[0]
-
-                try:
-                    tx.execute('''
-                            INSERT INTO task_dependency (task_id,
-                                                         dependency_id)
-                            VALUES (%s, %s)
-                            ''', (task_id, dependency_id))
-                except CheckViolation as e:
-                    if e.constraint_name == 'self_dependency':
-                        logger.error('Task cannot depend on itself.')
+                    if len(dependency) == 0:
+                        logger.error(f'No such task "{dependency_name}".')
                         tx.rollback()
 
                         return
-                    else:
-                        raise
+
+                    dependency_id, = dependency[0]
+
+                    try:
+                        tx.execute('''
+                                INSERT INTO task_dependency (task_id,
+                                                             dependency_id)
+                                VALUES (%s, %s)
+                                ''', (task_id, dependency_id))
+                    except CheckViolation as e:
+                        if e.constraint_name == 'self_dependency':
+                            logger.error('Task cannot depend on itself.')
+                            tx.rollback()
+
+                            return
+                        else:
+                            raise
 
             tx.execute('''
                     INSERT INTO task_history (task_id, state_id, reason_id)
