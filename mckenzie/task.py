@@ -708,6 +708,42 @@ class TaskManager(Manager):
 
         print()
 
+        @self.db.tx
+        def task_direct_dependents(tx):
+            return tx.execute('''
+                    SELECT COUNT(*)
+                    FROM task_dependency td
+                    WHERE td.dependency_id = %s
+                    ''', (task_id,))
+
+        num_direct_dependents, = task_direct_dependents[0]
+
+        @self.db.tx
+        def task_recursive_dependents(tx):
+            return tx.execute('''
+                    WITH RECURSIVE deps(id) AS (
+                        SELECT task_id
+                        FROM task_dependency
+                        WHERE dependency_id = %s
+                    UNION
+                        SELECT td.task_id
+                        FROM deps
+                        JOIN task_dependency td ON td.dependency_id = deps.id
+                    )
+                    SELECT COUNT(*) FROM deps
+                    ''', (task_id,))
+
+        num_recursive_dependents, = task_recursive_dependents[0]
+
+        if num_recursive_dependents == 1:
+            print('1 dependent.')
+        elif num_recursive_dependents > 1:
+            print(f'{num_recursive_dependents} dependents ({num_direct_dependents} direct).')
+        else:
+            print('No dependents.')
+
+        print()
+
         if claimed_by is not None:
             print(f'Claimed by "{self._parse_claim(claimed_by)}" since '
                   f'{format_datetime(claimed_since)} '
