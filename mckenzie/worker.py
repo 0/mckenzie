@@ -37,6 +37,10 @@ class WorkerReason(DatabaseReasonView):
 
 
 class Worker(Instance):
+    NUM_EXECUTE_RETRIES = 4
+
+    # 0.2 minutes
+    EXECUTE_RETRY_SECONDS = 12
     # 0.5 minutes
     TASK_WAIT_SECONDS = 30
     # 0.05 minutes
@@ -165,11 +169,20 @@ class Worker(Instance):
 
     def _execute_task(self, task_name):
         args = [self.conf.worker_execute_cmd, task_name]
-        p = subprocess.Popen(args, stdout=subprocess.PIPE, text=True,
-                             # If the child process spawns its own processes,
-                             # we can reliably kill the entire process group
-                             # when needed.
-                             start_new_session=True)
+
+        for _ in range(self.NUM_EXECUTE_RETRIES):
+            try:
+                p = subprocess.Popen(args, stdout=subprocess.PIPE, text=True,
+                                     # If the child process spawns its own
+                                     # processes, we can reliably kill the
+                                     # entire process group when needed.
+                                     start_new_session=True)
+            except OSError:
+                sleep(self.EXECUTE_RETRY_SECONDS)
+            else:
+                break
+        else:
+            return False, False, '', 0
 
         with self.lock:
             self.running_pids.add(p.pid)
@@ -183,7 +196,7 @@ class Worker(Instance):
         success = wait_pid == p.pid and wait_return == 0
 
         # The units of ru_maxrss should be KB.
-        return success, p.stdout.read(), int(wait_usage.ru_maxrss)
+        return True, success, p.stdout.read(), int(wait_usage.ru_maxrss)
 
     def _run(self, pool):
         task_starts = {}
@@ -240,7 +253,7 @@ class Worker(Instance):
                     task_id = self.fut_ids.pop(fut)
                     task_name = self.fut_names.pop(fut)
 
-                    success, output, max_mem_kb = fut.result()
+                    task_ran, success, output, max_mem_kb = fut.result()
                     max_mem_mb = max_mem_kb / 1024
 
                     if success:
@@ -256,6 +269,8 @@ class Worker(Instance):
                             reason_id = self._tr.rlookup('tr_failure_string')
                         else:
                             reason_id = self._tr.rlookup('tr_success')
+                    elif not task_ran:
+                        reason_id = self._tr.rlookup('tr_failure_run')
                     else:
                         reason_id = self._tr.rlookup('tr_failure_exit_code')
 
