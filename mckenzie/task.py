@@ -8,6 +8,7 @@ from threading import Event
 
 from .base import DatabaseReasonView, DatabaseStateView, Manager
 from .database import AdvisoryKey, CheckViolation
+from .util import DirectedAcyclicGraphNode as DAG
 from .util import check_proc, format_datetime, format_timedelta, print_table
 
 
@@ -20,9 +21,12 @@ logger = logging.getLogger(__name__)
 #       ^  |      ^         ^
 #       |  v      |         |
 # new ->+->+-> waiting -> ready -> running -> done
-#                 ^                   |
-#                 |                   v
-#                 +<-------------- failed
+#                 ^                   |        |
+#                 |                   v        |
+#                 +<-------------- failed      |
+#                 ^                            |
+#                 |                            |
+#                 +<---------------------------+
 
 
 class TaskState(DatabaseStateView):
@@ -36,7 +40,11 @@ class TaskReason(DatabaseReasonView):
 
 
 class TaskClaimError(Exception):
-    pass
+    def __init__(self, task_id, claimed_by):
+        super().__init__()
+
+        self.task_id = task_id
+        self.claimed_by = claimed_by
 
 
 class ClaimStack(ExitStack):
@@ -72,7 +80,7 @@ class TaskManager(Manager):
         success = tx.callproc('task_claim', (task_id, claimed_by))[0][0]
 
         if not success:
-            raise TaskClaimError()
+            raise TaskClaimError(task_id, claimed_by)
 
     @staticmethod
     def _unclaim(tx, task_id, claimed_by, *, force=False):
@@ -80,7 +88,7 @@ class TaskManager(Manager):
                               (task_id, claimed_by, force))[0][0]
 
         if not success:
-            raise TaskClaimError()
+            raise TaskClaimError(task_id, claimed_by)
 
     @staticmethod
     def _parse_claim(ident):
@@ -541,6 +549,145 @@ class TaskManager(Manager):
                                   self._tr.rlookup('tr_task_release')))
 
                 logger.info(task_name)
+
+    def rerun(self, args):
+        allow_no_cleanup = args.allow_no_cleanup
+        allow_no_unsynthesize = args.allow_no_unsynthesize
+        task_name = args.name
+
+        if self.conf.task_cleanup_cmd is None:
+            if not allow_no_cleanup:
+                logger.error('No cleanup command defined.')
+
+                return
+
+        if self.conf.task_unsynthesize_cmd is None:
+            if not allow_no_unsynthesize:
+                logger.error('No unsynthesis command defined.')
+
+                return
+
+        @self.db.tx
+        def task(tx):
+            return tx.execute('''
+                    SELECT id, state_id, synthesized
+                    FROM task
+                    WHERE name = %s
+                    ''', (task_name,))
+
+        if len(task) == 0:
+            logger.error(f'Task "{task_name}" does not exist.')
+
+            return
+
+        task_id, state_id, synthesized = task[0]
+        state = self._ts.lookup(state_id)
+        state_user = self._ts.lookup(state_id, user=True)
+
+        if state != 'ts_done':
+            logger.error(f'Task "{task_name}" is in state "{state_user}".')
+
+            return
+
+        target_data = task_id, task_name, state_id, synthesized
+
+        task_names = {task_id: task_name}
+
+        with self.db.advisory(AdvisoryKey.TASK_DEPENDENCY_ACCESS, shared=True):
+            # Recursively collect and claim all tasks which have the named task
+            # as a dependency.
+            try:
+                @self.db.tx
+                def task_graph(tx):
+                    result = DAG(target_data)
+                    task_nodes = {target_data[0]: result}
+                    task_queue = [result]
+                    idx = 0
+
+                    while idx < len(task_queue):
+                        cur_node = task_queue[idx]
+                        cur_id, *_ = cur_node.data
+
+                        new_tasks = tx.execute('''
+                                SELECT t.id, t.name, t.state_id, t.synthesized
+                                FROM task t
+                                JOIN task_dependency td ON td.task_id = t.id
+                                WHERE td.dependency_id = %s
+                                ''', (cur_id,))
+
+                        for (task_id, task_name, state_id,
+                                synthesized) in new_tasks:
+                            task_names[task_id] = task_name
+
+                            self._claim(tx, task_id, self.ident)
+
+                            try:
+                                new_node = task_nodes[task_id]
+                            except KeyError:
+                                new_node = DAG((task_id, task_name, state_id,
+                                                synthesized))
+                                task_nodes[task_id] = new_node
+
+                            cur_node.add(new_node)
+                            task_queue.append(new_node)
+
+                        idx += 1
+
+                    return result
+            except TaskClaimError as e:
+                task_name = task_names[e.task_id]
+                logger.error(f'Task "{task_name}" could not be claimed.')
+
+                return
+
+            task_list = list(task_graph)
+
+            with ClaimStack(self) as cs:
+                for task_id, *_ in task_list:
+                    cs.add(task_id)
+
+                for task_id, task_name, state_id, synthesized in task_list:
+                    state = self._ts.lookup(state_id)
+                    state_user = self._ts.lookup(state_id, user=True)
+
+                    if state == 'ts_running':
+                        logger.error(f'Task "{task_name}" is in state '
+                                     f'"{state_user}".')
+
+                        return
+
+                    if state not in ['ts_done', 'ts_failed']:
+                        continue
+
+                    logger.info(task_name)
+
+                    # Unsynthesize the task, if applicable.
+                    if synthesized:
+                        if not self._unsynthesize(task_name):
+                            return
+
+                        @self.db.tx
+                        def F(tx):
+                            tx.execute('''
+                                    UPDATE task
+                                    SET synthesized = FALSE
+                                    WHERE id = %s
+                                    ''', (task_id,))
+
+                    # Clean up after the task.
+                    if not self._clean(task_name):
+                        return
+
+                    # Change the task state.
+                    @self.db.tx
+                    def F(tx):
+                        tx.execute('''
+                                INSERT INTO task_history (task_id, state_id,
+                                                          reason_id)
+                                VALUES (%s, %s, %s)
+                                ''', (task_id,
+                                      self._ts.rlookup('ts_waiting'),
+                                      self._tr.rlookup('tr_task_rerun')))
 
     def reset_claimed(self, args):
         names = args.name

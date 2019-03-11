@@ -224,3 +224,43 @@ def check_scancel(proc, *, log):
         log(proc.stderr.strip())
 
     return None
+
+
+class DirectedAcyclicGraphIterator:
+    def __init__(self, root):
+        self.root = root
+
+        self.chain = [self.root]
+        self.seen = set(self.chain)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if not self.chain:
+            raise StopIteration()
+
+        while True:
+            for child in self.chain[-1].children:
+                if child in self.seen:
+                    continue
+
+                self.chain.append(child)
+                self.seen.add(child)
+
+                break
+            else:
+                return self.chain.pop().data
+
+
+class DirectedAcyclicGraphNode:
+    def __init__(self, data):
+        self.data = data
+
+        self.children = set()
+
+    def add(self, child):
+        self.children.add(child)
+
+    def __iter__(self):
+        return DirectedAcyclicGraphIterator(self)

@@ -126,6 +126,12 @@ class McKenzie:
         # task list-claimed
         p_task_list_claimed = p_task_sub.add_parser('list-claimed', help='list claimed tasks')
 
+        # task rerun
+        p_task_rerun = p_task_sub.add_parser('rerun', help='rerun a task and all its dependents')
+        p_task_rerun.add_argument('--allow-no-cleanup', action='store_true', help='proceed even if "task.cleanup_cmd" is not set')
+        p_task_rerun.add_argument('--allow-no-unsynthesize', action='store_true', help='proceed even if "task.unsynthesize_cmd" is not set')
+        p_task_rerun.add_argument('name', help='name of task')
+
         # task reset-failed
         p_task_reset_failed = p_task_sub.add_parser('reset-failed', help='reset all failed tasks to "waiting"')
         p_task_reset_failed.add_argument('--skip-clean', action='store_true', help='skip the cleanup step')
