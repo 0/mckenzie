@@ -341,6 +341,8 @@ class TaskManager(Manager):
                         task_names[task_name] = False
 
             for task_name, requested in task_names.items():
+                logger.debug(f'Holding task "{task_name}".')
+
                 @self.db.tx
                 def task(tx):
                     return tx.execute('''
@@ -506,6 +508,8 @@ class TaskManager(Manager):
                         task_names[task_name] = False
 
             for task_name, requested in task_names.items():
+                logger.debug(f'Releasing task "{task_name}".')
+
                 @self.db.tx
                 def task(tx):
                     return tx.execute('''
@@ -646,6 +650,11 @@ class TaskManager(Manager):
                 for task_id, *_ in task_list:
                     cs.add(task_id)
 
+                if len(task_list) == 1:
+                    logger.debug('Rerunning 1 task.')
+                else:
+                    logger.debug(f'Rerunning {len(task_list)} tasks.')
+
                 for task_id, task_name, state_id, synthesized in task_list:
                     state = self._ts.lookup(state_id)
                     state_user = self._ts.lookup(state_id, user=True)
@@ -661,8 +670,9 @@ class TaskManager(Manager):
 
                     logger.info(task_name)
 
-                    # Unsynthesize the task, if applicable.
                     if synthesized:
+                        logger.debug(f'Unsynthesizing task "{task_name}".')
+
                         if not self._unsynthesize(task_name):
                             return
 
@@ -674,11 +684,13 @@ class TaskManager(Manager):
                                     WHERE id = %s
                                     ''', (task_id,))
 
-                    # Clean up after the task.
+                    logger.debug(f'Cleaning task "{task_name}".')
+
                     if not self._clean(task_name):
                         return
 
-                    # Change the task state.
+                    logger.debug(f'Changing state of task "{task_name}".')
+
                     @self.db.tx
                     def F(tx):
                         tx.execute('''
@@ -693,6 +705,8 @@ class TaskManager(Manager):
         names = args.name
 
         for task_name in names:
+            logger.debug(f'Resetting claim on "{task_name}".')
+
             @self.db.tx
             def task(tx):
                 return tx.execute('''
@@ -910,11 +924,14 @@ class TaskManager(Manager):
         done = Event()
 
         def quit(signum=None, frame=None):
+            logger.debug('Quitting.')
             done.set()
 
         signal.signal(signal.SIGINT, quit)
 
         while not done.is_set():
+            logger.debug('Selecting next task.')
+
             @self.db.tx
             def task(tx):
                 return tx.execute('''
@@ -933,7 +950,10 @@ class TaskManager(Manager):
                         ''', (self._ts.rlookup('ts_done'), self.ident))
 
             if len(task) == 0:
+                logger.debug('No tasks found.')
+
                 if forever:
+                    logger.debug('Taking a break.')
                     done.wait(self.SYNTHESIZE_WAIT_SECONDS)
                 else:
                     quit()
@@ -944,6 +964,8 @@ class TaskManager(Manager):
                     claim_success) = task[0]
 
             if not claim_success:
+                logger.debug(f'Failed to claim task "{task_name}".')
+
                 continue
 
             with ClaimStack(self) as cs:
@@ -953,6 +975,8 @@ class TaskManager(Manager):
 
                 elapsed_time_hours = elapsed_time.total_seconds() / 3600
                 max_mem_gb = max_mem_mb / 1024
+
+                logger.debug('Running synthesis command.')
 
                 proc = subprocess.run([self.mck.conf.task_synthesize_cmd,
                                        task_name, str(elapsed_time_hours),
@@ -974,6 +998,8 @@ class TaskManager(Manager):
                             SET synthesized = TRUE
                             WHERE id = %s
                             ''', (task_id,))
+
+        logger.debug('Exited cleanly.')
 
     def unsynthesize(self, args):
         names = args.name

@@ -496,6 +496,8 @@ class WorkerManager(Manager):
                 state = self._ws.lookup(worker_state_id)
                 state_user = self._ws.lookup(worker_state_id, user=True)
 
+                logger.debug(f'Cleaning worker {slurm_job_id}.')
+
                 if state == 'ws_queued':
                     reason_id = self._wr.rlookup('wr_worker_clean_queued')
                 elif state == 'ws_running':
@@ -528,6 +530,8 @@ class WorkerManager(Manager):
                 task_names = []
 
                 for task_id, task_name, claimed_by in worker_tasks:
+                    logger.debug(f'Cleaning task "{task_name}".')
+
                     if claimed_by != ident:
                         logger.warning(f'Task "{task_name}" was not claimed '
                                        f'by worker {slurm_job_id}.')
@@ -703,6 +707,8 @@ class WorkerManager(Manager):
 
         for slurm_job_id in slurm_job_ids:
             # Try to cancel it before it gets a chance to run.
+            logger.debug(f'Attempting to cancel worker {slurm_job_id}.')
+
             proc = subprocess.run(['scancel', '--verbose', '--state=PENDING',
                                    str(slurm_job_id)],
                                   capture_output=True, text=True)
@@ -727,6 +733,8 @@ class WorkerManager(Manager):
                 continue
 
             # It's already running (or finished), so try to send a signal.
+            logger.debug(f'Attempting to signal worker {slurm_job_id}.')
+
             proc = subprocess.run(['scancel', '--verbose', '--state=RUNNING',
                                    '--batch', f'--signal={signal}',
                                    str(slurm_job_id)],
@@ -942,6 +950,8 @@ class WorkerManager(Manager):
                 '''
 
         for _ in range(num):
+            logger.debug('Spawning worker job.')
+
             proc = subprocess.run(proc_args, input=script.strip(),
                                   capture_output=True, text=True)
 
@@ -971,6 +981,8 @@ class WorkerManager(Manager):
                         VALUES (%s, %s, %s)
                         ''', (slurm_job_id, self._ws.rlookup('ws_queued'),
                               self._wr.rlookup('wr_worker_spawn')))
+
+            logger.debug(f'Releasing worker job {slurm_job_id}.')
 
             proc = subprocess.run(['scontrol', 'release', str(slurm_job_id)],
                                   capture_output=True, text=True)
