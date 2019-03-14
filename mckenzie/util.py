@@ -188,6 +188,15 @@ def print_table(pre_header, data, *, total=None):
         print('|')
 
 
+def humanize_datetime(dt, now):
+    ago = now - dt
+
+    if ago >= timedelta(hours=24):
+        return format_datetime(dt)
+
+    return format_timedelta(ago) + ' ago'
+
+
 def check_proc(proc, *, log):
     if proc.returncode != 0:
         log(f'Encountered an error ({proc.returncode}).')

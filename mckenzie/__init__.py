@@ -163,6 +163,9 @@ class McKenzie:
         p_worker_list = p_worker_sub.add_parser('list', help='list workers')
         p_worker_list.add_argument('--state', metavar='S', help='only workers in state S')
 
+        # worker list-queued
+        p_worker_list_queued = p_worker_sub.add_parser('list-queued', help='list queued workers')
+
         # worker quit
         p_worker_quit = p_worker_sub.add_parser('quit', help='signal worker job to quit')
         p_worker_quit.add_argument('--abort', action='store_true', help='quit immediately, killing running tasks')

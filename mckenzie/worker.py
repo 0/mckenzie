@@ -12,7 +12,7 @@ from time import sleep
 
 from .base import DatabaseReasonView, DatabaseStateView, Instance, Manager
 from .task import TaskManager, TaskReason, TaskState
-from .util import check_proc, check_scancel, print_table
+from .util import check_proc, check_scancel, humanize_datetime, print_table
 
 
 logger = logging.getLogger(__name__)
@@ -644,14 +644,19 @@ class WorkerManager(Manager):
                 query_args += (state_id,)
             else:
                 query += '''
-                        WHERE ws.job_exists
+                        WHERE w.state_id = %s
                         OR (w.state_id = %s
                             AND NOT w.failure_acknowledged)
                         '''
-                query_args += (self._ws.rlookup('ws_failed'),)
+                query_args += (self._ws.rlookup('ws_running'),
+                               self._ws.rlookup('ws_failed'))
 
-            # Order by remaining time, then ID.
-            query += ' ORDER BY w.time_start + w.time_limit - NOW(), w.id'
+            # Order by remaining time, putting failed workers first.
+            query += '''
+                    ORDER BY w.state_id = %s DESC,
+                             w.time_start + w.time_limit - NOW()
+                    '''
+            query_args += (self._ws.rlookup('ws_failed'),)
 
             return tx.execute(query, query_args)
 
@@ -697,6 +702,40 @@ class WorkerManager(Manager):
 
         print_table(['Job ID', 'State', ('Time (R/T)', 2),
                      ('Tasks (R/C/%/T)', 4), ('Mem (GB;U/T/%)', 3)],
+                    worker_data)
+
+    def list_queued(self, args):
+        @self.db.tx
+        def workers(tx):
+            return tx.execute('''
+                    SELECT num_cores, time_limit, mem_limit_mb,
+                           MAX(time_start), NOW(),
+                           COUNT(CASE WHEN state_id = %s THEN 1 END)
+                    FROM worker
+                    GROUP BY num_cores, time_limit, mem_limit_mb
+                    ORDER BY MAX(time_start) NULLS FIRST,
+                             num_cores, time_limit, mem_limit_mb
+                    ''', (self._ws.rlookup('ws_queued'),))
+
+        worker_data = []
+
+        for (num_cores, time_limit, mem_limit_mb, max_time_start, now,
+                count) in workers:
+            mem_limit_gb = ceil(mem_limit_mb / 1024)
+
+            if max_time_start is None:
+                max_time_start = '-'
+            else:
+                max_time_start = humanize_datetime(max_time_start, now)
+
+            if count == 0:
+                count = '-'
+
+            worker_data.append([num_cores, time_limit, mem_limit_gb, count,
+                                max_time_start])
+
+        print_table(['Cores', 'Time', 'Mem (GB)', 'Count',
+                     'Most recent start'],
                     worker_data)
 
     def quit(self, args):
