@@ -938,6 +938,22 @@ class WorkerManager(Manager):
         else:
             print('No worker tasks.')
 
+        print()
+
+        worker_output_file = self._worker_output_file(slurm_job_id,
+                                                      absolute=True)
+
+        try:
+            with open(worker_output_file) as f:
+                lines = f.readlines()[-10:]
+        except OSError as e:
+            print(f'Could not open "{worker_output_file}".')
+        else:
+            print(f'==> {worker_output_file} <==')
+
+            for line in lines:
+                print(line.strip())
+
     def spawn(self, args):
         worker_cpus = args.cpus
         worker_time_hours = args.time
