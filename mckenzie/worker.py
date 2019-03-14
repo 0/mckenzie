@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 import logging
 from math import ceil
 import os
+from pathlib import Path
 import shlex
 import signal
 import subprocess
@@ -374,6 +375,11 @@ class Worker(Instance):
 
 
 class WorkerManager(Manager):
+    # Path to worker output files, relative to chdir.
+    WORKER_OUTPUT_DIR = Path('worker_output')
+    # Worker output file name template.
+    WORKER_OUTPUT_FILE_TEMPLATE = 'worker-{}.out'
+
     # 3 minutes
     EXIT_BUFFER_SECONDS = 180
     # 2 minutes
@@ -405,6 +411,21 @@ class WorkerManager(Manager):
             state_user += ' (!)'
 
         return state, state_user
+
+    def _worker_output_file(self, slurm_job_id=None, *, absolute=False):
+        if slurm_job_id is None:
+            # Replacement symbol for sbatch.
+            slurm_job_id = '%j'
+        else:
+            slurm_job_id = str(slurm_job_id)
+
+        path = (self.WORKER_OUTPUT_DIR /
+                self.WORKER_OUTPUT_FILE_TEMPLATE.format(slurm_job_id))
+
+        if absolute:
+            path = self.conf.general_chdir / path
+
+        return path
 
     def summary(self, args):
         @self.db.tx
@@ -938,6 +959,7 @@ class WorkerManager(Manager):
         proc_args.append('--parsable')
         proc_args.append('--signal=B:TERM@' + str(self.END_SIGNAL_SECONDS))
         proc_args.append('--chdir=' + str(self.conf.general_chdir))
+        proc_args.append('--output=' + str(self._worker_output_file()))
         proc_args.append('--cpus-per-task=' + str(worker_cpus))
         proc_args.append('--time=' + str(worker_time_minutes))
         proc_args.append('--mem=' + str(worker_mem_mb))
@@ -956,6 +978,8 @@ class WorkerManager(Manager):
             mck_args = ''
 
         os.makedirs(self.conf.general_chdir, exist_ok=True)
+        os.makedirs(self.conf.general_chdir / self.WORKER_OUTPUT_DIR,
+                    exist_ok=True)
 
         script = f'''
                 #!/bin/bash
