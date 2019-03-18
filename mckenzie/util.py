@@ -1,5 +1,6 @@
 from collections import defaultdict
 from datetime import datetime, timedelta
+import subprocess
 
 
 class HandledException(Exception):
@@ -233,6 +234,29 @@ def check_scancel(proc, *, log):
         log(proc.stderr.strip())
 
     return None
+
+
+def mem_rss_mb(pid, *, log):
+    try:
+        # Get the memory usage of each process in the session.
+        proc = subprocess.run(['ps', '-o', 'rss=', '--sid', str(pid)],
+                              capture_output=True, text=True)
+    except OSError:
+        return None
+
+    if not check_proc(proc, log=log):
+        return None
+
+    result = 0
+
+    for line in proc.stdout.split():
+        try:
+            # The units of rss should be KB.
+            result += int(line) // 1024
+        except ValueError:
+            return None
+
+    return result
 
 
 class DirectedAcyclicGraphIterator:

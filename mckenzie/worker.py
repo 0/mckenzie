@@ -12,7 +12,8 @@ from time import sleep
 
 from .base import DatabaseReasonView, DatabaseStateView, Instance, Manager
 from .task import TaskManager, TaskReason, TaskState
-from .util import check_proc, check_scancel, humanize_datetime, print_table
+from .util import (check_proc, check_scancel, humanize_datetime, mem_rss_mb,
+                   print_table)
 
 
 logger = logging.getLogger(__name__)
@@ -42,8 +43,8 @@ class Worker(Instance):
 
     # 0.2 minutes
     EXECUTE_RETRY_SECONDS = 12
-    # 0.5 minutes
-    TASK_WAIT_SECONDS = 30
+    # 0.1 minutes
+    TASK_WAIT_SECONDS = 6
     # 0.05 minutes
     TASK_CLEANUP_WAIT_SECONDS = 3
     # 5 minutes
@@ -86,14 +87,16 @@ class Worker(Instance):
 
         # Futures currently executing.
         self.fut_pending = set()
-        # PIDs currently executing.
-        self.running_pids = set()
+        # PIDs currently executing (mapping to task names).
+        self.running_pids = {}
 
         # Task IDs.
         self.fut_ids = {}
         # Task names.
         self.fut_names = {}
 
+        # Times at which tasks start running.
+        self.task_starts = {}
         # Expected maximum memory usage of running tasks.
         self.task_mems_mb = {}
 
@@ -186,13 +189,13 @@ class Worker(Instance):
             return False, False, '', 0
 
         with self.lock:
-            self.running_pids.add(p.pid)
+            self.running_pids[p.pid] = task_name
 
         # Block until the process is done.
         wait_pid, wait_return, wait_usage = os.wait4(p.pid, 0)
 
         with self.lock:
-            self.running_pids.remove(p.pid)
+            self.running_pids.pop(p.pid)
 
         success = wait_pid == p.pid and wait_return == 0
 
@@ -200,13 +203,42 @@ class Worker(Instance):
         return True, success, p.stdout.read(), int(wait_usage.ru_maxrss)
 
     def _run(self, pool):
-        task_starts = {}
+        overmemory_mb = {}
+        rss_fail_warn = False
 
         while not self.done:
             if self.remaining_time.total_seconds() < self.GIVE_UP_SECONDS:
                 # Too little time remaining in job, so we will not take on any
                 # more tasks.
                 self.quit()
+
+            # Check memory usage.
+            with self.lock:
+                pids = self.running_pids.copy()
+
+            for pid, task_name in pids.items():
+                rss_mb = mem_rss_mb(pid, log=logger.warning)
+                limit_mb = self.task_mems_mb[task_name]
+
+                if rss_mb is None:
+                    if not rss_fail_warn:
+                        rss_fail_warn = True
+                        logger.warning('Failed to get memory usage for task '
+                                       f'"{task_name}" ({pid}).')
+
+                    continue
+
+                if rss_mb > limit_mb:
+                    logger.info(f'Killing task "{task_name}" ({pid}) for '
+                                'using too much memory '
+                                f'({rss_mb} MB > {limit_mb} MB).')
+
+                    overmemory_mb[task_name] = rss_mb
+
+                    try:
+                        os.killpg(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
 
             # Fill up with tasks.
             while (not self.quitting
@@ -221,7 +253,7 @@ class Worker(Instance):
 
                 task_id, task_name, task_mem_mb = task
 
-                task_starts[task_name] = datetime.now()
+                self.task_starts[task_name] = datetime.now()
                 self.task_mems_mb[task_name] = task_mem_mb
 
                 logger.debug(f'Submitting task "{task_name}" to the pool.')
@@ -270,6 +302,8 @@ class Worker(Instance):
                             reason_id = self._tr.rlookup('tr_failure_string')
                         else:
                             reason_id = self._tr.rlookup('tr_success')
+                    elif task_name in overmemory_mb:
+                        reason_id = self._tr.rlookup('tr_failure_memory')
                     elif not task_ran:
                         reason_id = self._tr.rlookup('tr_failure_run')
                     else:
@@ -282,10 +316,22 @@ class Worker(Instance):
 
                     logger.debug(f'"{task_name}": {success}')
 
-                    duration = datetime.now() - task_starts[task_name]
+                    duration = datetime.now() - self.task_starts[task_name]
 
                     @self.db.tx
                     def F(tx):
+                        # Extend task memory limit if it was underestimated.
+                        if task_name in overmemory_mb:
+                            rss_mb = overmemory_mb.pop(task_name)
+                            new_limit_mb = 1.2 * rss_mb
+
+                            tx.execute('''
+                                    UPDATE task
+                                    SET mem_limit_mb = %s
+                                    WHERE id = %s
+                                    AND mem_limit_mb < %s
+                                    ''', (new_limit_mb, task_id, rss_mb))
+
                         tx.execute('''
                                 UPDATE task
                                 SET elapsed_time = %s,
@@ -302,7 +348,7 @@ class Worker(Instance):
 
                         TaskManager._unclaim(tx, task_id, self.ident)
 
-                    task_starts.pop(task_name)
+                    self.task_starts.pop(task_name)
                     self.task_mems_mb.pop(task_name)
             elif self.quitting:
                 self.done = True
@@ -338,8 +384,8 @@ class Worker(Instance):
                 with self.lock:
                     to_kill = self.running_pids.copy()
 
-                for pid in to_kill:
-                    logger.info(f'Killing process {pid}.')
+                for pid, task_name in to_kill.items():
+                    logger.info(f'Killing task "{task_name}" ({pid}).')
 
                     try:
                         os.killpg(pid, signal.SIGKILL)
@@ -356,10 +402,22 @@ class Worker(Instance):
                     task_id = self.fut_ids.pop(fut)
                     task_name = self.fut_names.pop(fut)
 
+                    duration = datetime.now() - self.task_starts[task_name]
+
                     logger.debug(f'Task "{task_name}" was aborted.')
 
                     @self.db.tx
                     def F(tx):
+                        # Extend task time limit if it was underestimated.
+                        new_limit = 1.5 * duration
+
+                        tx.execute('''
+                                UPDATE task
+                                SET time_limit = %s
+                                WHERE id = %s
+                                AND time_limit < %s
+                                ''', (new_limit, task_id, duration))
+
                         tx.execute('''
                                 INSERT INTO task_history (task_id, state_id,
                                                           reason_id, worker_id)
