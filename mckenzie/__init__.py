@@ -257,7 +257,7 @@ class McKenzie:
     def __init__(self, conf_path):
         self.conf = Conf(conf_path)
 
-        self.unsafe = False
+        self.unsafe = self.conf.general_unsafe
 
     def _preflight(self, *, database_init=True, database_update=True):
         if self.unsafe:

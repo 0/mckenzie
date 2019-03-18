@@ -26,6 +26,9 @@ class Conf:
 
             raise HandledException()
 
+    def getbool(self, *args, **kwargs):
+        return self._get(self.parser.getboolean, *args, **kwargs)
+
     def getint(self, *args, **kwargs):
         return self._get(self.parser.getint, *args, **kwargs)
 
@@ -69,6 +72,8 @@ class Conf:
 
         # Extract data.
         self.general_chdir = Path(self.getstr('general', 'chdir'))
+        self.general_unsafe = self.getbool('general', 'unsafe',
+                                           fallback=False)
 
         self.db = Database(self.getstr('database', 'dbname'),
                            self.getstr('database', 'user'),
