@@ -54,6 +54,10 @@ FORMAT_FUNCTIONS = defaultdict(lambda: str, {
 })
 
 
+def format_object(x):
+    return FORMAT_FUNCTIONS[type(x)](x)
+
+
 RIGHT_ALIGNS = set([
     datetime,
     int,
@@ -81,8 +85,7 @@ def print_table(pre_header, data, *, total=None):
         row_str = []
 
         for elem in row:
-            format_f = FORMAT_FUNCTIONS[type(elem)]
-            row_str.append(format_f(elem))
+            row_str.append(format_object(elem))
 
         data_str.append(row_str)
 
@@ -115,8 +118,7 @@ def print_table(pre_header, data, *, total=None):
                     else:
                         tot += elem
 
-            format_f = FORMAT_FUNCTIONS[type(tot)]
-            total_row.append(format_f(tot))
+            total_row.append(format_object(tot))
 
     # Compute column widths and separators.
     max_widths = [0 for _ in range(num_cols)]

@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS worker_note_history
+(
+	id SERIAL PRIMARY KEY,
+	worker_id INTEGER NOT NULL REFERENCES worker,
+	note_id INTEGER NOT NULL REFERENCES worker_note,
+	note_args TEXT[] NOT NULL,
+	time TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);

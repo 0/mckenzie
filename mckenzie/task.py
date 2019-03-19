@@ -6,7 +6,8 @@ import signal
 import subprocess
 from threading import Event
 
-from .base import DatabaseReasonView, DatabaseStateView, Manager
+from .base import (DatabaseNoteView, DatabaseReasonView, DatabaseStateView,
+                   Manager)
 from .database import AdvisoryKey, CheckViolation
 from .util import DirectedAcyclicGraphNode as DAG
 from .util import check_proc, format_datetime, format_timedelta, print_table
@@ -37,6 +38,11 @@ class TaskState(DatabaseStateView):
 class TaskReason(DatabaseReasonView):
     def __init__(self, *args, **kwargs):
         super().__init__('task_reason', *args, **kwargs)
+
+
+class TaskNote(DatabaseNoteView):
+    def __init__(self, *args, **kwargs):
+        super().__init__('task_note', 'task_note_history', *args, **kwargs)
 
 
 class TaskClaimError(Exception):
@@ -114,6 +120,7 @@ class TaskManager(Manager):
 
         self._ts = TaskState(self.db)
         self._tr = TaskReason(self.db)
+        self._tn = TaskNote(self.db)
 
     def _format_state(self, state_id, synthesized):
         state = self._ts.lookup(state_id)
@@ -814,6 +821,29 @@ class TaskManager(Manager):
                         task_data)
         else:
             print('No state history.')
+
+        print()
+
+        @self.db.tx
+        def task_note_history(tx):
+            return tx.execute('''
+                    SELECT id, note_id, time
+                    FROM task_note_history
+                    WHERE task_id = %s
+                    ORDER BY id
+                    ''', (task_id,))
+
+        task_data = []
+
+        for history_id, note_id, time in task_note_history:
+            note_desc = self._tn.format(history_id, note_id)
+
+            task_data.append([time, note_desc])
+
+        if task_data:
+            print_table(['Time', 'Note'], task_data)
+        else:
+            print('No notes.')
 
         print()
 

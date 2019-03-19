@@ -1,6 +1,8 @@
 import os
 from random import randint
 
+from .util import format_object
+
 
 class DatabaseView:
     def __init__(self, db):
@@ -11,6 +13,48 @@ class DatabaseView:
 
     def rlookup(self, name):
         raise NotImplementedError()
+
+
+class DatabaseNoteView(DatabaseView):
+    def __init__(self, table_name, history_table_name, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.history_table_name = history_table_name
+
+        # Mapping from IDs to description formats.
+        self._dict_d = {}
+        # Mapping from IDs to argument types.
+        self._dict_t = {}
+
+        @self.db.tx
+        def notes(tx):
+            return tx.execute(f'''
+                    SELECT id, description_format, arg_types
+                    FROM {table_name}
+                    ORDER BY id
+                    ''')
+
+        for note_id, description_format, arg_types in notes:
+            self._dict_d[note_id] = description_format
+            self._dict_t[note_id] = arg_types
+
+    def format(self, history_id, note_id):
+        arg_strings = []
+
+        for i, arg_type in enumerate(self._dict_t[note_id]):
+            arg_strings.append(f'note_args[{i+1}]::{arg_type}')
+
+        arg_string = ', '.join(arg_strings)
+
+        @self.db.tx
+        def args(tx):
+            return tx.execute(f'''
+                    SELECT {arg_string}
+                    FROM {self.history_table_name}
+                    WHERE id = %s
+                    ''', (history_id,))
+
+        return self._dict_d[note_id].format(*map(format_object, args[0]))
 
 
 class DatabaseReasonView(DatabaseView):
