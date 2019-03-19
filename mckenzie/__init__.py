@@ -85,6 +85,8 @@ class McKenzie:
 
         # database show
         p_database_show = p_database_sub.add_parser('show', help='show entity details')
+        p_database_show.add_argument('--diff', action='store_const', dest='diff', const=True, default=None, help='show successive diffs')
+        p_database_show.add_argument('--no-diff', action='store_const', dest='diff', const=False, default=None, help='show file contents')
         p_database_show.add_argument('name', nargs='?', help='name of entity')
 
         # task

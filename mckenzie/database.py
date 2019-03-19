@@ -1,5 +1,6 @@
 from collections import defaultdict
 from contextlib import contextmanager
+from difflib import unified_diff
 from enum import Enum, IntEnum
 import hashlib
 import logging
@@ -225,6 +226,11 @@ class DatabaseManager(Manager):
         'T': 'table',
     }
 
+    DIFF_DEFAULT = {
+        'function': True,
+        'table': False,
+    }
+
     def _entities(self):
         all_migrations = DatabaseMigrationManager.get_all_migrations()
 
@@ -264,6 +270,7 @@ class DatabaseManager(Manager):
                     f'{self.db.host}:{self.db.port} is OK.')
 
     def show(self, args):
+        diff = args.diff
         target = args.name
 
         entity_types, entity_paths = self._entities()
@@ -283,18 +290,43 @@ class DatabaseManager(Manager):
 
             return
 
-        if target not in entity_types:
+        if target not in entity_types or len(entity_paths[target]) == 0:
             logger.info(f'No entity named "{target}".')
 
             return
 
-        for path in entity_paths[target]:
+        if diff is None:
+            diff = self.DIFF_DEFAULT[entity_types[target]]
+
+        if diff:
+            path = entity_paths[target][0]
+
             print('==>', path, '<==')
 
             with open(path) as f:
                 print(f.read())
 
             print()
+
+            for path1, path2 in zip(entity_paths[target][:-1],
+                                    entity_paths[target][1:]):
+                with open(path1) as f1, open(path2) as f2:
+                    delta = unified_diff(f1.readlines(), f2.readlines(),
+                                         fromfile=path1, tofile=path2)
+
+                for line in delta:
+                    print(line, end='')
+
+                print()
+                print()
+        else:
+            for path in entity_paths[target]:
+                print('==>', path, '<==')
+
+                with open(path) as f:
+                    print(f.read())
+
+                print()
 
 
 class DatabaseMigrationManager(Manager):
