@@ -10,7 +10,7 @@ from .base import (DatabaseNoteView, DatabaseReasonView, DatabaseStateView,
                    Manager)
 from .database import AdvisoryKey, CheckViolation
 from .util import DirectedAcyclicGraphNode as DAG
-from .util import check_proc, format_datetime, format_timedelta, print_table
+from .util import check_proc, format_datetime, format_timedelta
 
 
 logger = logging.getLogger(__name__)
@@ -125,13 +125,16 @@ class TaskManager(Manager):
     def _format_state(self, state_id, synthesized):
         state = self._ts.lookup(state_id)
         state_user = self._ts.lookup(state_id, user=True)
+        color = None
 
         if state == 'ts_failed':
             state_user += ' (!)'
+            color = self.c('error')
         elif state == 'ts_done' and not synthesized:
             state_user += ' (!)'
+            color = self.c('warning')
 
-        return state, state_user
+        return state, state_user, color
 
     def _run_cmd(self, cmd, *args):
         if cmd is None:
@@ -166,19 +169,20 @@ class TaskManager(Manager):
         task_data = []
 
         for state_id, synthesized, time_limit, elapsed_time, count in tasks:
-            state, state_user = self._format_state(state_id, synthesized)
+            state, state_user, state_color \
+                    = self._format_state(state_id, synthesized)
 
             if state == 'ts_done':
                 time = elapsed_time
             else:
                 time = time_limit
 
-            task_data.append([state_user, count, time])
+            task_data.append([(state_user, state_color), count, time])
 
         sorted_data = sorted(task_data,
-                             key=lambda row: self.STATE_ORDER.index(row[0]))
-        print_table(['State', 'Count', 'Total time'], sorted_data,
-                    total=('Total', (1, 2)))
+                             key=lambda row: self.STATE_ORDER.index(row[0][0]))
+        self.print_table(['State', 'Count', 'Total time'], sorted_data,
+                         total=('Total', (1, 2)))
 
     def add(self, args):
         held = args.held
@@ -444,18 +448,22 @@ class TaskManager(Manager):
 
         for (name, state_id, priority, time_limit, mem_limit, num_dep,
                 num_dep_pend, synthesized) in tasks:
-            state, state_user = self._format_state(state_id, synthesized)
+            state, state_user, state_color \
+                    = self._format_state(state_id, synthesized)
 
             if num_dep > 0:
                 dep = f'{num_dep-num_dep_pend}/{num_dep}'
+
+                if num_dep_pend > 0:
+                    dep = (dep, self.c('notice'))
             else:
                 dep = ''
 
-            task_data.append([name, state_user, dep, priority, time_limit,
-                              mem_limit])
+            task_data.append([name, (state_user, state_color), dep, priority,
+                              time_limit, mem_limit])
 
-        print_table(['Name', 'State', 'Dep', 'P', 'Time', 'Mem (MB)'],
-                    task_data)
+        self.print_table(['Name', 'State', 'Dep', 'P', 'Time', 'Mem (MB)'],
+                         task_data)
 
     def list_claimed(self, args):
         @self.db.tx
@@ -482,8 +490,8 @@ class TaskManager(Manager):
             task_data.append([name, state_user, agent, claimed_since,
                               claimed_for])
 
-        print_table(['Name', 'State', 'Claimed by', 'Since', 'For'],
-                    task_data)
+        self.print_table(['Name', 'State', 'Claimed by', 'Since', 'For'],
+                         task_data)
 
     def release(self, args):
         all_tasks = args.all
@@ -817,8 +825,8 @@ class TaskManager(Manager):
                               worker_id])
 
         if task_data:
-            print_table(['Time', 'Duration', 'State', 'Reason', 'Worker'],
-                        task_data)
+            self.print_table(['Time', 'Duration', 'State', 'Reason', 'Worker'],
+                             task_data)
         else:
             print('No state history.')
 
@@ -841,7 +849,7 @@ class TaskManager(Manager):
             task_data.append([time, note_desc])
 
         if task_data:
-            print_table(['Time', 'Note'], task_data)
+            self.print_table(['Time', 'Note'], task_data)
         else:
             print('No notes.')
 
@@ -869,8 +877,9 @@ class TaskManager(Manager):
                               duration])
 
         if task_data:
-            print_table(['Worker', 'Active at', 'Inactive at', 'Duration'],
-                        task_data)
+            self.print_table(['Worker', 'Active at', 'Inactive at',
+                              'Duration'],
+                             task_data)
         else:
             print('No worker activity.')
 
@@ -894,7 +903,7 @@ class TaskManager(Manager):
             task_data.append([dependency_name, state_user])
 
         if task_data:
-            print_table(['Dependency', 'State'], task_data)
+            self.print_table(['Dependency', 'State'], task_data)
         else:
             print('No dependencies.')
 

@@ -65,7 +65,7 @@ RIGHT_ALIGNS = set([
 ])
 
 
-def print_table(pre_header, data, *, total=None):
+def print_table(pre_header, pre_data, *, reset_str, total=None):
     # Convert all header entries to tuples.
     header = []
 
@@ -74,6 +74,20 @@ def print_table(pre_header, data, *, total=None):
             header.append(heading)
         else:
             header.append((heading, 1))
+
+    # Convert all data entries to tuples.
+    data = []
+
+    for row in pre_data:
+        data_row = []
+
+        for elem in row:
+            if isinstance(elem, tuple):
+                data_row.append(elem)
+            else:
+                data_row.append((elem, None))
+
+        data.append(data_row)
 
     num_rows = len(data)
     num_cols = sum(heading[1] for heading in header)
@@ -84,17 +98,16 @@ def print_table(pre_header, data, *, total=None):
     for row in data:
         row_str = []
 
-        for elem in row:
-            row_str.append(format_object(elem))
+        for elem, color in row:
+            row_str.append((format_object(elem), color))
 
         data_str.append(row_str)
 
     # Determine alignments.
+    aligns = []
     if num_rows > 0:
-        row = data[0]
-        aligns = ['>' if type(elem) in RIGHT_ALIGNS else '<' for elem in row]
-    else:
-        aligns = []
+        for elem, color in data[0]:
+            aligns.append('>' if type(elem) in RIGHT_ALIGNS else '<')
 
     # Compute column totals.
     if total is not None:
@@ -108,7 +121,7 @@ def print_table(pre_header, data, *, total=None):
                 tot = total[0]
             elif col_idx in total[1]:
                 for row in data:
-                    elem = row[col_idx]
+                    elem, color = row[col_idx]
 
                     if elem is None or isinstance(elem, str):
                         continue
@@ -124,7 +137,7 @@ def print_table(pre_header, data, *, total=None):
     max_widths = [0 for _ in range(num_cols)]
 
     for row in data_str:
-        for col_idx, elem in enumerate(row):
+        for col_idx, (elem, color) in enumerate(row):
             width = len(elem)
 
             if max_widths[col_idx] < width:
@@ -170,10 +183,19 @@ def print_table(pre_header, data, *, total=None):
     print('+')
 
     for row in data_str:
-        for t, f, p, a, w in zip(row, first_subcols, paddings, aligns,
-                                 max_widths):
+        for (t, clr), f, p, a, w in zip(row, first_subcols, paddings, aligns,
+                                        max_widths):
             s = '|' if f else '/'
-            print('{} {}{{:{}{}}} '.format(s, ' ' * p, a, w).format(t), end='')
+
+            if clr is None:
+                clr = ''
+                clr_reset = ''
+            else:
+                clr_reset = reset_str
+
+            fmt = '{} {}{}{{:{}{}}}{} '.format(s, ' ' * p, clr, a, w,
+                                               clr_reset)
+            print(fmt.format(t), end='')
 
         print('|')
 

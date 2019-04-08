@@ -4,6 +4,7 @@ import logging
 import os
 
 from .batch import BatchManager
+from .color import Colorizer
 from .conf import Conf
 from .database import DatabaseManager, DatabaseMigrationManager
 from .task import TaskManager
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class McKenzie:
+    ENV_COLOR = 'MCKENZIE_COLOR'
     ENV_CONF = 'MCKENZIE_CONF'
 
     MANAGERS = {
@@ -52,6 +54,7 @@ class McKenzie:
             p.add_argument('--unsafe', action='store_true', help='skip safety checks')
             p.add_argument('-q', '--quiet', action='count', help='decrease verbosity')
             p.add_argument('-v', '--verbose', action='count', help='increase verbosity')
+            p.add_argument('--color', action='store_true', help='use color in output')
 
         # batch
         p_batch = p_sub.add_parser('batch', help='batch command execution')
@@ -254,10 +257,20 @@ class McKenzie:
         if args.unsafe:
             mck.unsafe = True
 
+        if args.color:
+            mck.colorizer.use_colors = True
+        else:
+            try:
+                mck.colorizer.use_colors = bool(os.environ[cls.ENV_COLOR])
+            except KeyError:
+                pass
+
         mck.call_manager(args)
 
     def __init__(self, conf_path):
         self.conf = Conf(conf_path)
+
+        self.colorizer = Colorizer()
 
         self.unsafe = self.conf.general_unsafe
 

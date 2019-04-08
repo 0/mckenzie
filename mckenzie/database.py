@@ -10,7 +10,6 @@ import pkg_resources
 import psycopg2
 
 from .base import Manager
-from .util import print_table
 
 
 logger = logging.getLogger(__name__)
@@ -286,7 +285,7 @@ class DatabaseManager(Manager):
                 entity_data.append([entity_name, entity_types[entity_name],
                                     len(entity_paths[entity_name])])
 
-            print_table(['Name', 'Type', 'Migrations'], entity_data)
+            self.print_table(['Name', 'Type', 'Migrations'], entity_data)
 
             return
 
@@ -315,7 +314,23 @@ class DatabaseManager(Manager):
                                          fromfile=path1, tofile=path2)
 
                 for line in delta:
+                    do_reset = True
+
+                    if line.startswith(('+++', '---')):
+                        self.c('bold', p=1)
+                    elif line.startswith('@@'):
+                        self.c('fg_cyan', p=1)
+                    elif line.startswith('+'):
+                        self.c('fg_green', p=1)
+                    elif line.startswith('-'):
+                        self.c('fg_red', p=1)
+                    else:
+                        do_reset = False
+
                     print(line, end='')
+
+                    if do_reset:
+                        self.c('reset', p=1)
 
                 print()
                 print()
@@ -464,8 +479,8 @@ class DatabaseMigrationManager(Manager):
 
         migration_data = [
             ['applied', 0],
-            ['pending (!)', 0],
-            ['extra (!)', 0],
+            [('pending (!)', self.c('warning')), 0],
+            [('extra (!)', self.c('error')), 0],
         ]
 
         for name in all_migrations:
@@ -483,7 +498,8 @@ class DatabaseMigrationManager(Manager):
             if migration_data[idx][1] == 0:
                 migration_data.pop(idx)
 
-        print_table(['State', 'Count'], migration_data, total=('Total', (1,)))
+        self.print_table(['State', 'Count'], migration_data,
+                         total=('Total', (1,)))
 
     def check(self, args):
         @self.db.tx
@@ -505,11 +521,14 @@ class DatabaseMigrationManager(Manager):
             sha256_hash = hashlib.sha256(migration_encoded)
             sha256_digest = sha256_hash.hexdigest()
 
-            check = 'OK' if sha256_digest == sha256_digest_db else 'NOT OK'
+            if sha256_digest == sha256_digest_db:
+                check = ('OK', self.c('good'))
+            else:
+                check = ('NOT OK', self.c('error'))
 
             migration_data.append([name, check])
 
-        print_table(['Name', 'Check'], migration_data)
+        self.print_table(['Name', 'Check'], migration_data)
 
     def list(self, args):
         @self.db.tx
@@ -524,9 +543,12 @@ class DatabaseMigrationManager(Manager):
             except KeyError:
                 applied_at = ''
 
+            if not applied_at:
+                name = (name, self.c('bold'))
+
             migration_data.append([name, applied_at])
 
-        print_table(['Name', 'Applied at'], migration_data)
+        self.print_table(['Name', 'Applied at'], migration_data)
 
     def update(self, args):
         insane = args.insane
