@@ -5,6 +5,7 @@ from enum import Enum, IntEnum
 import hashlib
 import logging
 import os
+import sys
 
 import pkg_resources
 import psycopg2
@@ -230,7 +231,7 @@ class DatabaseManager(Manager):
         'table': False,
     }
 
-    def _entities(self):
+    def _entities(self, *, only_applied=True):
         all_migrations = DatabaseMigrationManager.get_all_migrations()
 
         @self.db.tx
@@ -241,7 +242,7 @@ class DatabaseManager(Manager):
         entity_paths = defaultdict(list)
 
         for pre_name, path in sorted(all_migrations.items()):
-            if pre_name not in applied_migrations:
+            if only_applied and pre_name not in applied_migrations:
                 continue
 
             # Remove file extension.
@@ -258,6 +259,49 @@ class DatabaseManager(Manager):
     def _is_trigger(name):
         return name.startswith(('aftins_', 'aftupd_', 'befupd_'))
 
+    def _print_migration(self, path):
+        print('==>', path, '<==')
+
+        with open(path) as f:
+            print(f.read())
+
+        print()
+
+    def _print_migration_diff(self, path1, path2, *, full):
+        with open(path1) as f1, open(path2) as f2:
+            kwargs = {
+                'fromfile': path1,
+                'tofile': path2,
+            }
+
+            if full:
+                kwargs['n'] = sys.maxsize
+
+            delta = unified_diff(f1.readlines(), f2.readlines(),
+                                 **kwargs)
+
+        for line in delta:
+            do_reset = True
+
+            if line.startswith(('+++', '---')):
+                self.c('bold', p=1)
+            elif line.startswith('@@'):
+                self.c('fg_cyan', p=1)
+            elif line.startswith('+'):
+                self.c('fg_green', p=1)
+            elif line.startswith('-'):
+                self.c('fg_red', p=1)
+            else:
+                do_reset = False
+
+            print(line, end='')
+
+            if do_reset:
+                self.c('reset', p=1)
+
+        print()
+        print()
+
     def summary(self, args):
         if not self.db.is_initialized():
             return
@@ -270,9 +314,12 @@ class DatabaseManager(Manager):
 
     def show(self, args):
         diff = args.diff
+        full = args.full
+        latest = args.latest
+        pending = args.pending
         target = args.name
 
-        entity_types, entity_paths = self._entities()
+        entity_types, entity_paths = self._entities(only_applied=(not pending))
 
         if target is None:
             es = sorted(entity_types)
@@ -297,51 +344,22 @@ class DatabaseManager(Manager):
         if diff is None:
             diff = self.DIFF_DEFAULT[entity_types[target]]
 
-        if diff:
-            path = entity_paths[target][0]
+        paths = entity_paths[target]
 
-            print('==>', path, '<==')
-
-            with open(path) as f:
-                print(f.read())
-
-            print()
-
-            for path1, path2 in zip(entity_paths[target][:-1],
-                                    entity_paths[target][1:]):
-                with open(path1) as f1, open(path2) as f2:
-                    delta = unified_diff(f1.readlines(), f2.readlines(),
-                                         fromfile=path1, tofile=path2)
-
-                for line in delta:
-                    do_reset = True
-
-                    if line.startswith(('+++', '---')):
-                        self.c('bold', p=1)
-                    elif line.startswith('@@'):
-                        self.c('fg_cyan', p=1)
-                    elif line.startswith('+'):
-                        self.c('fg_green', p=1)
-                    elif line.startswith('-'):
-                        self.c('fg_red', p=1)
-                    else:
-                        do_reset = False
-
-                    print(line, end='')
-
-                    if do_reset:
-                        self.c('reset', p=1)
-
-                print()
-                print()
+        if latest:
+            if diff and len(paths) >= 2:
+                self._print_migration_diff(paths[-2], paths[-1], full=full)
+            else:
+                self._print_migration(paths[-1])
         else:
-            for path in entity_paths[target]:
-                print('==>', path, '<==')
+            if diff:
+                self._print_migration(paths[0])
 
-                with open(path) as f:
-                    print(f.read())
-
-                print()
+                for path1, path2 in zip(paths[:-1], paths[1:]):
+                    self._print_migration_diff(path1, path2, full=full)
+            else:
+                for path in paths:
+                    self._print_migration(path)
 
 
 class DatabaseMigrationManager(Manager):

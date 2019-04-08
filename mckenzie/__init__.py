@@ -90,6 +90,9 @@ class McKenzie:
         p_database_show = p_database_sub.add_parser('show', help='show entity details')
         p_database_show.add_argument('--diff', action='store_const', dest='diff', const=True, default=None, help='show successive diffs')
         p_database_show.add_argument('--no-diff', action='store_const', dest='diff', const=False, default=None, help='show file contents')
+        p_database_show.add_argument('--full', action='store_true', help='show all context in diff')
+        p_database_show.add_argument('--latest', action='store_true', help='only show latest migration')
+        p_database_show.add_argument('--pending', action='store_true', help='include pending migrations')
         p_database_show.add_argument('name', nargs='?', help='name of entity')
 
         # task
