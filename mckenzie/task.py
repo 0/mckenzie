@@ -148,8 +148,15 @@ class TaskManager(Manager):
 
         return check_proc(proc, log=logger.error)
 
-    def _clean(self, task_name):
-        return self._run_cmd(self.conf.task_cleanup_cmd, task_name)
+    def _clean(self, task_name, *, partial=False):
+        args = []
+
+        if partial:
+            args.append('--partial')
+
+        args.append(task_name)
+
+        return self._run_cmd(self.conf.task_cleanup_cmd, *args)
 
     def _unsynthesize(self, task_name):
         return self._run_cmd(self.conf.task_unsynthesize_cmd, task_name)
@@ -282,6 +289,7 @@ class TaskManager(Manager):
     def clean(self, args):
         allow_unsynthesized = args.allow_unsynthesized
         ignore_pending_dependents = args.ignore_pending_dependents
+        partial = args.partial
         names = args.name
 
         if self.conf.task_cleanup_cmd is None:
@@ -321,15 +329,16 @@ class TaskManager(Manager):
 
                     continue
 
+                if state == 'ts_done':
+                    if not allow_unsynthesized and not synthesized:
+                        logger.warning(f'Task "{task_name}" is not '
+                                       'synthesized.')
+
+                        continue
+
                 with self.db.advisory(AdvisoryKey.TASK_DEPENDENCY_ACCESS,
                                       shared=True):
-                    if state == 'ts_done':
-                        if not allow_unsynthesized and not synthesized:
-                            logger.warning(f'Task "{task_name}" is not '
-                                           'synthesized.')
-
-                            continue
-
+                    if not partial and state == 'ts_done':
                         @self.db.tx
                         def task_direct_dependents(tx):
                             return tx.execute('''
@@ -371,20 +380,29 @@ class TaskManager(Manager):
                     logger.info(task_name)
 
                     if state != 'ts_cleaned':
-                        if not self._clean(task_name):
+                        if not self._clean(task_name, partial=partial):
                             return
 
                     if state == 'ts_done':
-                        @self.db.tx
-                        def F(tx):
-                            tx.execute('''
-                                    INSERT INTO task_history (task_id,
-                                                              state_id,
-                                                              reason_id)
-                                    VALUES (%s, %s, %s)
-                                    ''', (task_id,
-                                          self._ts.rlookup('ts_cleaned'),
-                                          self._tr.rlookup('tr_task_clean')))
+                        if partial:
+                            @self.db.tx
+                            def F(tx):
+                                tx.execute('''
+                                        UPDATE task
+                                        SET partial_cleaned = TRUE
+                                        WHERE id = %s
+                                        ''', (task_id,))
+                        else:
+                            @self.db.tx
+                            def F(tx):
+                                tx.execute('''
+                                        INSERT INTO task_history (task_id,
+                                                                  state_id,
+                                                                  reason_id)
+                                        VALUES (%s, %s, %s)
+                                        ''', (task_id,
+                                              self._ts.rlookup('ts_cleaned'),
+                                              self._tr.rlookup('tr_task_clean')))
 
     def hold(self, args):
         all_tasks = args.all
@@ -1044,6 +1062,7 @@ class TaskManager(Manager):
                             FROM task
                             WHERE state_id = %s
                             AND NOT synthesized
+                            AND NOT partial_cleaned
                             AND claimed_by IS NULL
                             LIMIT 1
                             FOR UPDATE SKIP LOCKED
