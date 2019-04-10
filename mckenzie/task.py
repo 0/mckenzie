@@ -139,16 +139,26 @@ class TaskManager(Manager):
 
         return state, state_user, color
 
-    def _run_cmd(self, cmd, *args):
+    def _run_cmd(self, cmd, *args, setpgrp=False):
         if cmd is None:
             return True
 
-        proc = subprocess.run((cmd,) + args, cwd=self.conf.general_chdir,
-                              capture_output=True, text=True)
+        kwargs = {
+            'cwd': self.conf.general_chdir,
+            'capture_output': True,
+            'text': True,
+        }
+
+        if setpgrp:
+            # Prevent the child process from receiving any signals sent to this
+            # process.
+            kwargs['preexec_fn'] = os.setpgrp
+
+        proc = subprocess.run((cmd,) + args, **kwargs)
 
         return check_proc(proc, log=logger.error)
 
-    def _clean(self, task_name, *, partial=False):
+    def _clean(self, task_name, *, partial=False, **kwargs):
         args = []
 
         if partial:
@@ -156,10 +166,15 @@ class TaskManager(Manager):
 
         args.append(task_name)
 
-        return self._run_cmd(self.conf.task_cleanup_cmd, *args)
+        return self._run_cmd(self.conf.task_cleanup_cmd, *args, **kwargs)
 
-    def _unsynthesize(self, task_name):
-        return self._run_cmd(self.conf.task_unsynthesize_cmd, task_name)
+    def _synthesize(self, task_name, elapsed_time_hours, max_mem_gb, **kwargs):
+        return self._run_cmd(self.conf.task_synthesize_cmd, task_name,
+                             elapsed_time_hours, max_mem_gb, **kwargs)
+
+    def _unsynthesize(self, task_name, **kwargs):
+        return self._run_cmd(self.conf.task_unsynthesize_cmd, task_name,
+                             **kwargs)
 
     def summary(self, args):
         @self.db.tx
@@ -1101,17 +1116,8 @@ class TaskManager(Manager):
 
                 logger.debug('Running synthesis command.')
 
-                proc = subprocess.run([self.mck.conf.task_synthesize_cmd,
-                                       task_name, str(elapsed_time_hours),
-                                       str(max_mem_gb)],
-                                      cwd=self.conf.general_chdir,
-                                      capture_output=True, text=True,
-                                      # Prevent the child process from
-                                      # receiving any signals sent to this
-                                      # process.
-                                      preexec_fn=os.setpgrp)
-
-                if not check_proc(proc, log=logger.error):
+                if not self._synthesize(task_name, str(elapsed_time_hours),
+                                        str(max_mem_gb), setpgrp=True):
                     return
 
                 @self.db.tx
