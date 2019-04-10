@@ -115,6 +115,10 @@ class McKenzie:
         p_task_clean.add_argument('--partial', action='store_true', help='only clean data which does not affect dependent tasks')
         p_task_clean.add_argument('name', nargs='*', help='task name')
 
+        # task clean-all-partial
+        p_task_clean_all_partial = p_task_sub.add_parser('clean-all-partial', help='run partial cleanup command for eligible tasks')
+        p_task_clean_all_partial.add_argument('--forever', action='store_true', help='wait for more tasks when done')
+
         # task hold
         p_task_hold = p_task_sub.add_parser('hold', help='change task state to "held"')
         p_task_hold.add_argument('--all', action='store_true', help='try to hold all possible tasks in addition to named tasks')

@@ -76,6 +76,8 @@ class ClaimStack(ExitStack):
 
 class TaskManager(Manager):
     # 1 minute
+    CLEAN_ALL_PARTIAL_WAIT_SECONDS = 60
+    # 1 minute
     SYNTHESIZE_WAIT_SECONDS = 60
 
     STATE_ORDER = ['new', 'held', 'waiting', 'ready', 'running', 'failed (!)',
@@ -418,6 +420,80 @@ class TaskManager(Manager):
                                         ''', (task_id,
                                               self._ts.rlookup('ts_cleaned'),
                                               self._tr.rlookup('tr_task_clean')))
+
+    def clean_all_partial(self, args):
+        forever = args.forever
+
+        if self.conf.task_cleanup_cmd is None:
+            logger.warning('No cleanup command defined.')
+
+            return
+
+        done = Event()
+
+        def quit(signum=None, frame=None):
+            logger.debug('Quitting.')
+            done.set()
+
+        signal.signal(signal.SIGINT, quit)
+
+        while not done.is_set():
+            logger.debug('Selecting next task.')
+
+            @self.db.tx
+            def task(tx):
+                return tx.execute('''
+                        WITH uncleaned_task AS (
+                            SELECT id, name
+                            FROM task
+                            WHERE state_id = %s
+                            AND synthesized
+                            AND NOT partial_cleaned
+                            AND claimed_by IS NULL
+                            LIMIT 1
+                            FOR UPDATE SKIP LOCKED
+                        )
+                        SELECT id, name, task_claim(id, %s)
+                        FROM uncleaned_task
+                        ''', (self._ts.rlookup('ts_done'), self.ident))
+
+            if len(task) == 0:
+                logger.debug('No tasks found.')
+
+                if forever:
+                    logger.debug('Taking a break.')
+                    done.wait(self.CLEAN_ALL_PARTIAL_WAIT_SECONDS)
+                else:
+                    quit()
+
+                continue
+
+            task_id, task_name, claim_success = task[0]
+
+            if not claim_success:
+                logger.debug(f'Failed to claim task "{task_name}".')
+
+                continue
+
+            with ClaimStack(self) as cs:
+                cs.add(task_id)
+
+                logger.info(task_name)
+
+                logger.debug('Running cleanup command.')
+
+                if not self._clean(task_name, partial=True, setpgrp=True):
+                    return
+
+                @self.db.tx
+                def F(tx):
+                    tx.execute('''
+                            UPDATE task
+                            SET partial_cleaned = TRUE
+                            WHERE id = %s
+                            ''', (task_id,))
+
+        logger.debug('Exited cleanly.')
 
     def hold(self, args):
         all_tasks = args.all
