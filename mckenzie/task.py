@@ -319,6 +319,8 @@ class TaskManager(Manager):
         allow_unsynthesized = args.allow_unsynthesized
         ignore_pending_dependents = args.ignore_pending_dependents
         partial = args.partial
+        name_pattern = args.name_pattern
+        state_name = args.state
         names = args.name
 
         if self.conf.task_cleanup_cmd is None:
@@ -326,7 +328,31 @@ class TaskManager(Manager):
 
             return
 
-        for task_name in names:
+        req_state_id = self._parse_state(state_name)
+
+        task_names = {name: True for name in names}
+
+        if name_pattern is not None:
+            @self.db.tx
+            def tasks(tx):
+                query = '''
+                        SELECT name
+                        FROM task
+                        WHERE name LIKE %s
+                        '''
+                query_args = (name_pattern,)
+
+                if req_state_id is not None:
+                    query += ' AND state_id = %s'
+                    query_args += (req_state_id,)
+
+                return tx.execute(query, query_args)
+
+            for (task_name,) in tasks:
+                if task_name not in task_names:
+                    task_names[task_name] = False
+
+        for task_name, requested in task_names.items():
             @self.db.tx
             def task(tx):
                 return tx.execute('''
@@ -345,23 +371,27 @@ class TaskManager(Manager):
             state_user = self._ts.lookup(state_id, user=True)
 
             if not claim_success:
-                logger.warning(f'Task "{task_name}" could not be claimed.')
+                if requested:
+                    logger.warning(f'Task "{task_name}" could not be claimed.')
 
                 continue
 
             with ClaimStack(self) as cs:
                 cs.add(task_id)
 
-                if state == 'ts_running':
-                    logger.warning(f'Task "{task_name}" is in state '
-                                   f'"{state_user}".')
+                if ((req_state_id is not None and state_id != req_state_id)
+                        or state == 'ts_running'):
+                    if requested:
+                        logger.warning(f'Task "{task_name}" is in state '
+                                       f'"{state_user}".')
 
                     continue
 
                 if state == 'ts_done':
                     if not allow_unsynthesized and not synthesized:
-                        logger.warning(f'Task "{task_name}" is not '
-                                       'synthesized.')
+                        if requested:
+                            logger.warning(f'Task "{task_name}" is not '
+                                           'synthesized.')
 
                         continue
 
@@ -394,15 +424,17 @@ class TaskManager(Manager):
                                 dependent_any_pending = True
 
                         if dependent_any_claim_failed:
-                            logger.warning('Failed to claim dependent of task '
-                                           f'"{task_name}".')
+                            if requested:
+                                logger.warning('Failed to claim dependent of '
+                                               f'task "{task_name}".')
 
                             continue
 
                         if (not ignore_pending_dependents
                                 and dependent_any_pending):
-                            logger.warning(f'Task "{task_name}" has pending '
-                                           'dependents.')
+                            if requested:
+                                logger.warning(f'Task "{task_name}" has '
+                                               'pending dependents.')
 
                             continue
 

@@ -113,6 +113,8 @@ class McKenzie:
         p_task_clean.add_argument('--allow-unsynthesized', action='store_true', help='clean tasks that are done but not synthesized')
         p_task_clean.add_argument('--ignore-pending-dependents', action='store_true', help='clean tasks that have pending direct dependents')
         p_task_clean.add_argument('--partial', action='store_true', help='only clean data which does not affect dependent tasks')
+        p_task_clean.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
+        p_task_clean.add_argument('--state', metavar='S', help='only tasks in state S')
         p_task_clean.add_argument('name', nargs='*', help='task name')
 
         # task clean-all-partial
