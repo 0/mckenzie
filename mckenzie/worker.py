@@ -13,7 +13,8 @@ from time import sleep
 from .base import (DatabaseNoteView, DatabaseReasonView, DatabaseStateView,
                    Instance, Manager)
 from .task import TaskManager, TaskReason, TaskState
-from .util import check_proc, check_scancel, humanize_datetime, mem_rss_mb
+from .util import (HandledException, check_proc, check_scancel,
+                   humanize_datetime, mem_rss_mb)
 
 
 logger = logging.getLogger(__name__)
@@ -480,6 +481,17 @@ class WorkerManager(Manager):
 
         return state, state_user, color
 
+    def _parse_state(self, state_name):
+        if state_name is None:
+            return None
+
+        try:
+            return self._ws.rlookup(state_name, user=True)
+        except KeyError:
+            logger.error(f'Invalid state "{state_name}".')
+
+            raise HandledException()
+
     def _worker_output_file(self, slurm_job_id=None, *, absolute=False):
         if slurm_job_id is None:
             # Replacement symbol for sbatch.
@@ -556,15 +568,7 @@ class WorkerManager(Manager):
     def clean(self, args):
         state_name = args.state
 
-        if state_name is not None:
-            try:
-                state_id = self._ws.rlookup(state_name, user=True)
-            except KeyError:
-                logger.error(f'Invalid state "{state_name}".')
-
-                return
-        else:
-            state_id = None
+        state_id = self._parse_state(state_name)
 
         ok_worker_ids = []
 
@@ -684,15 +688,7 @@ class WorkerManager(Manager):
     def list(self, args):
         state_name = args.state
 
-        if state_name is not None:
-            try:
-                state_id = self._ws.rlookup(state_name, user=True)
-            except KeyError:
-                logger.error(f'Invalid state "{state_name}".')
-
-                return
-        else:
-            state_id = None
+        state_id = self._parse_state(state_name)
 
         @self.db.tx
         def workers(tx):
@@ -840,15 +836,7 @@ class WorkerManager(Manager):
         else:
             signal = 'INT'
 
-        if state_name is not None:
-            try:
-                state_id = self._ws.rlookup(state_name, user=True)
-            except KeyError:
-                logger.error(f'Invalid state "{state_name}".')
-
-                return
-        else:
-            state_id = None
+        state_id = self._parse_state(state_name)
 
         if all_workers:
             @self.db.tx

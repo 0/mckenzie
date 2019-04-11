@@ -10,7 +10,8 @@ from .base import (DatabaseNoteView, DatabaseReasonView, DatabaseStateView,
                    Manager)
 from .database import AdvisoryKey, CheckViolation
 from .util import DirectedAcyclicGraphNode as DAG
-from .util import check_proc, format_datetime, format_timedelta
+from .util import (HandledException, check_proc, format_datetime,
+                   format_timedelta)
 
 
 logger = logging.getLogger(__name__)
@@ -140,6 +141,17 @@ class TaskManager(Manager):
             color = self.c('error')
 
         return state, state_user, color
+
+    def _parse_state(self, state_name):
+        if state_name is None:
+            return None
+
+        try:
+            return self._ts.rlookup(state_name, user=True)
+        except KeyError:
+            logger.error(f'Invalid state "{state_name}".')
+
+            raise HandledException()
 
     def _run_cmd(self, cmd, *args, setpgrp=False):
         if cmd is None:
@@ -582,15 +594,7 @@ class TaskManager(Manager):
         state_name = args.state
         name_pattern = args.name_pattern
 
-        if state_name is not None:
-            try:
-                state_id = self._ts.rlookup(state_name, user=True)
-            except KeyError:
-                logger.error(f'Invalid state "{state_name}".')
-
-                return
-        else:
-            state_id = None
+        state_id = self._parse_state(state_name)
 
         @self.db.tx
         def tasks(tx):
