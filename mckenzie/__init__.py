@@ -110,6 +110,8 @@ class McKenzie:
 
         # task clean
         p_task_clean = p_task_sub.add_parser('clean', help='run cleanup command')
+        p_task_clean.add_argument('--allow-unsynthesized', action='store_true', help='clean tasks that are done but not synthesized')
+        p_task_clean.add_argument('--ignore-pending-dependents', action='store_true', help='clean tasks that have pending direct dependents')
         p_task_clean.add_argument('name', nargs='*', help='task name')
 
         # task hold

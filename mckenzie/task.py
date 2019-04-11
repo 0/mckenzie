@@ -21,13 +21,13 @@ logger = logging.getLogger(__name__)
 #       held <----+<--------+
 #       ^  |      ^         ^
 #       |  v      |         |
-# new ->+->+-> waiting -> ready -> running -> done
-#                 ^                   |        |
-#                 |                   v        |
-#                 +<-------------- failed      |
-#                 ^                            |
-#                 |                            |
-#                 +<---------------------------+
+# new ->+->+-> waiting -> ready -> running -> done -> cleaned
+#                 ^                   |        |         |
+#                 |                   v        |         |
+#                 +<-------------- failed      |         |
+#                 ^                            |         |
+#                 |                            |         |
+#                 +<---------------------------+---------+
 
 
 class TaskState(DatabaseStateView):
@@ -79,7 +79,7 @@ class TaskManager(Manager):
     SYNTHESIZE_WAIT_SECONDS = 60
 
     STATE_ORDER = ['new', 'held', 'waiting', 'ready', 'running', 'failed (!)',
-                   'done (!)', 'done']
+                   'done (!)', 'done', 'cleaned (!)', 'cleaned']
 
     @staticmethod
     def _claim(tx, task_id, claimed_by):
@@ -133,6 +133,9 @@ class TaskManager(Manager):
         elif state == 'ts_done' and not synthesized:
             state_user += ' (!)'
             color = self.c('warning')
+        elif state == 'ts_cleaned' and not synthesized:
+            state_user += ' (!)'
+            color = self.c('error')
 
         return state, state_user, color
 
@@ -172,7 +175,7 @@ class TaskManager(Manager):
             state, state_user, state_color \
                     = self._format_state(state_id, synthesized)
 
-            if state == 'ts_done':
+            if state in ['ts_done', 'ts_cleaned']:
                 time = elapsed_time
             else:
                 time = time_limit
@@ -277,6 +280,8 @@ class TaskManager(Manager):
             self._unclaim(tx, task_id, self.ident)
 
     def clean(self, args):
+        allow_unsynthesized = args.allow_unsynthesized
+        ignore_pending_dependents = args.ignore_pending_dependents
         names = args.name
 
         if self.conf.task_cleanup_cmd is None:
@@ -288,7 +293,7 @@ class TaskManager(Manager):
             @self.db.tx
             def task(tx):
                 return tx.execute('''
-                        SELECT id, state_id, task_claim(id, %s)
+                        SELECT id, state_id, synthesized, task_claim(id, %s)
                         FROM task
                         WHERE name = %s
                         ''', (self.ident, task_name))
@@ -298,7 +303,7 @@ class TaskManager(Manager):
 
                 continue
 
-            task_id, state_id, claim_success = task[0]
+            task_id, state_id, synthesized, claim_success = task[0]
             state = self._ts.lookup(state_id)
             state_user = self._ts.lookup(state_id, user=True)
 
@@ -310,16 +315,76 @@ class TaskManager(Manager):
             with ClaimStack(self) as cs:
                 cs.add(task_id)
 
-                if state in ['ts_running', 'ts_done']:
+                if state == 'ts_running':
                     logger.warning(f'Task "{task_name}" is in state '
                                    f'"{state_user}".')
 
                     continue
 
-                logger.info(task_name)
+                with self.db.advisory(AdvisoryKey.TASK_DEPENDENCY_ACCESS,
+                                      shared=True):
+                    if state == 'ts_done':
+                        if not allow_unsynthesized and not synthesized:
+                            logger.warning(f'Task "{task_name}" is not '
+                                           'synthesized.')
 
-                if not self._clean(task_name):
-                    return
+                            continue
+
+                        @self.db.tx
+                        def task_direct_dependents(tx):
+                            return tx.execute('''
+                                    SELECT td.task_id,
+                                           task_claim(td.task_id, %s),
+                                           ts.pending
+                                    FROM task_dependency td
+                                    JOIN task t ON t.id = td.task_id
+                                    JOIN task_state ts ON ts.id = t.state_id
+                                    WHERE td.dependency_id = %s
+                                    ''', (self.ident, task_id))
+
+                        dependent_any_claim_failed = False
+                        dependent_any_pending = False
+
+                        for (dependent_id, dependent_claim_success,
+                                dependent_pending) in task_direct_dependents:
+                            if dependent_claim_success:
+                                cs.add(dependent_id)
+                            else:
+                                dependent_any_claim_failed = True
+
+                            if dependent_pending:
+                                dependent_any_pending = True
+
+                        if dependent_any_claim_failed:
+                            logger.warning('Failed to claim dependent of task '
+                                           f'"{task_name}".')
+
+                            continue
+
+                        if (not ignore_pending_dependents
+                                and dependent_any_pending):
+                            logger.warning(f'Task "{task_name}" has pending '
+                                           'dependents.')
+
+                            continue
+
+                    logger.info(task_name)
+
+                    if state != 'ts_cleaned':
+                        if not self._clean(task_name):
+                            return
+
+                    if state == 'ts_done':
+                        @self.db.tx
+                        def F(tx):
+                            tx.execute('''
+                                    INSERT INTO task_history (task_id,
+                                                              state_id,
+                                                              reason_id)
+                                    VALUES (%s, %s, %s)
+                                    ''', (task_id,
+                                          self._ts.rlookup('ts_cleaned'),
+                                          self._tr.rlookup('tr_task_clean')))
 
     def hold(self, args):
         all_tasks = args.all
@@ -423,7 +488,7 @@ class TaskManager(Manager):
             query = '''
                     SELECT name, state_id, priority, time_limit, mem_limit_mb,
                            num_dependencies, num_dependencies_pending,
-                           synthesized
+                           num_dependencies_cleaned, synthesized
                     FROM task
                     '''
             query_args = ()
@@ -447,14 +512,14 @@ class TaskManager(Manager):
         task_data = []
 
         for (name, state_id, priority, time_limit, mem_limit, num_dep,
-                num_dep_pend, synthesized) in tasks:
+                num_dep_pend, num_dep_clean, synthesized) in tasks:
             state, state_user, state_color \
                     = self._format_state(state_id, synthesized)
 
             if num_dep > 0:
-                dep = f'{num_dep-num_dep_pend}/{num_dep}'
+                dep = f'{num_dep-num_dep_pend-num_dep_clean}/{num_dep}'
 
-                if num_dep_pend > 0:
+                if num_dep_pend + num_dep_clean > 0:
                     dep = (dep, self.c('notice'))
             else:
                 dep = ''
@@ -603,7 +668,7 @@ class TaskManager(Manager):
         state = self._ts.lookup(state_id)
         state_user = self._ts.lookup(state_id, user=True)
 
-        if state != 'ts_done':
+        if state not in ['ts_done', 'ts_cleaned']:
             logger.error(f'Task "{task_name}" is in state "{state_user}".')
 
             return
@@ -680,7 +745,7 @@ class TaskManager(Manager):
 
                         return
 
-                    if state not in ['ts_done', 'ts_failed']:
+                    if state not in ['ts_failed', 'ts_done', 'ts_cleaned']:
                         continue
 
                     logger.info(task_name)
