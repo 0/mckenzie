@@ -326,6 +326,8 @@ class Worker(Instance):
 
                     @self.db.tx
                     def F(tx):
+                        limit_retry = False
+
                         # Extend task memory limit if it was underestimated.
                         if task_name in overmemory_mb:
                             rss_mb = overmemory_mb.pop(task_name)
@@ -337,6 +339,9 @@ class Worker(Instance):
                                     WHERE id = %s
                                     AND mem_limit_mb < %s
                                     ''', (new_limit_mb, task_id, rss_mb))
+
+                            if not success:
+                                limit_retry = True
 
                         tx.execute('''
                                 UPDATE task
@@ -351,6 +356,19 @@ class Worker(Instance):
                                 VALUES (%s, %s, %s, %s)
                                 ''', (task_id, state_id, reason_id,
                                       self.slurm_job_id))
+
+                        if limit_retry:
+                            # Automatically reset after extending the limit.
+                            tx.execute('''
+                                    INSERT INTO task_history (task_id,
+                                                              state_id,
+                                                              reason_id,
+                                                              worker_id)
+                                    VALUES (%s, %s, %s, %s)
+                                    ''', (task_id,
+                                          self._ts.rlookup('ts_waiting'),
+                                          self._tr.rlookup('tr_limit_retry'),
+                                          self.slurm_job_id))
 
                         TaskManager._unclaim(tx, task_id, self.ident)
 
@@ -430,6 +448,15 @@ class Worker(Instance):
                                 VALUES (%s, %s, %s, %s)
                                 ''', (task_id, self._ts.rlookup('ts_failed'),
                                       self._tr.rlookup('tr_failure_abort'),
+                                      self.slurm_job_id))
+
+                        # Automatically reset after extending the limit.
+                        tx.execute('''
+                                INSERT INTO task_history (task_id, state_id,
+                                                          reason_id, worker_id)
+                                VALUES (%s, %s, %s, %s)
+                                ''', (task_id, self._ts.rlookup('ts_waiting'),
+                                      self._tr.rlookup('tr_limit_retry'),
                                       self.slurm_job_id))
 
                         TaskManager._unclaim(tx, task_id, self.ident)
