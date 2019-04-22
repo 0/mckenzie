@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 
 # Task state flow:
 #
+#    cancelled <--+
+#        ^        |
+#        |        |
 #       held <----+<--------+
 #       ^  |      ^         ^
 #       |  v      |         |
@@ -81,8 +84,8 @@ class TaskManager(Manager):
     # 1 minute
     SYNTHESIZE_WAIT_SECONDS = 60
 
-    STATE_ORDER = ['new', 'held', 'waiting', 'ready', 'running', 'failed (!)',
-                   'done (!)', 'done', 'cleaned (!)', 'cleaned']
+    STATE_ORDER = ['new', 'cancelled', 'held', 'waiting', 'ready', 'running',
+                   'failed (!)', 'done (!)', 'done', 'cleaned (!)', 'cleaned']
 
     @staticmethod
     def _claim(tx, task_id, claimed_by):
@@ -314,6 +317,79 @@ class TaskManager(Manager):
                     ''', (task_id, state_id, reason_id))
 
             self._unclaim(tx, task_id, self.ident)
+
+    def cancel(self, args):
+        skip_clean = args.skip_clean
+        name_pattern = args.name_pattern
+        names = args.name
+
+        task_names = {name: True for name in names}
+
+        if name_pattern is not None:
+            @self.db.tx
+            def tasks(tx):
+                return tx.execute('''
+                        SELECT t.name
+                        FROM task t
+                        JOIN task_state ts ON ts.id = t.state_id
+                        WHERE t.name LIKE %s
+                        AND (ts.holdable OR ts.id = %s)
+                        ''', (name_pattern, self._ts.rlookup('ts_held')))
+
+            for (task_name,) in tasks:
+                if task_name not in task_names:
+                    task_names[task_name] = False
+
+        for task_name, requested in task_names.items():
+            @self.db.tx
+            def task(tx):
+                return tx.execute('''
+                        SELECT t.id, t.state_id, ts.holdable,
+                               task_claim(t.id, %s)
+                        FROM task t
+                        JOIN task_state ts ON ts.id = t.state_id
+                        WHERE t.name = %s
+                        ''', (self.ident, task_name))
+
+            if len(task) == 0:
+                logger.warning(f'Task "{task_name}" does not exist.')
+
+                continue
+
+            task_id, state_id, holdable, claim_success = task[0]
+            state = self._ts.lookup(state_id)
+            state_user = self._ts.lookup(state_id, user=True)
+
+            if not claim_success:
+                if requested:
+                    logger.warning(f'Task "{task_name}" could not be claimed.')
+
+                continue
+
+            with ClaimStack(self) as cs:
+                cs.add(task_id)
+
+                if not (holdable or state == 'ts_held'):
+                    if requested:
+                        logger.warning(f'Task "{task_name}" is in state '
+                                       f'"{state_user}".')
+
+                    continue
+
+                logger.info(task_name)
+
+                if not skip_clean:
+                    if not self._clean(task_name):
+                        return
+
+                @self.db.tx
+                def F(tx):
+                    tx.execute('''
+                            INSERT INTO task_history (task_id, state_id,
+                                                      reason_id)
+                            VALUES (%s, %s, %s)
+                            ''', (task_id, self._ts.rlookup('ts_cancelled'),
+                                  self._tr.rlookup('tr_task_cancel')))
 
     def clean(self, args):
         allow_unsynthesized = args.allow_unsynthesized
@@ -1241,6 +1317,71 @@ class TaskManager(Manager):
                             ''', (task_id,))
 
         logger.debug('Exited cleanly.')
+
+    def uncancel(self, args):
+        name_pattern = args.name_pattern
+        names = args.name
+
+        task_names = {name: True for name in names}
+
+        if name_pattern is not None:
+            @self.db.tx
+            def tasks(tx):
+                return tx.execute('''
+                        SELECT name
+                        FROM task
+                        WHERE name LIKE %s
+                        AND state_id = %s
+                        ''', (name_pattern, self._ts.rlookup('ts_cancelled')))
+
+            for (task_name,) in tasks:
+                if task_name not in task_names:
+                    task_names[task_name] = False
+
+        for task_name, requested in task_names.items():
+            @self.db.tx
+            def task(tx):
+                return tx.execute('''
+                        SELECT id, state_id, task_claim(id, %s)
+                        FROM task
+                        WHERE name = %s
+                        ''', (self.ident, task_name))
+
+            if len(task) == 0:
+                logger.warning(f'Task "{task_name}" does not exist.')
+
+                continue
+
+            task_id, state_id, claim_success = task[0]
+            state = self._ts.lookup(state_id)
+            state_user = self._ts.lookup(state_id, user=True)
+
+            if not claim_success:
+                if requested:
+                    logger.warning(f'Task "{task_name}" could not be claimed.')
+
+                continue
+
+            with ClaimStack(self) as cs:
+                cs.add(task_id)
+
+                if state != 'ts_cancelled':
+                    if requested:
+                        logger.warning(f'Task "{task_name}" is in state '
+                                       f'"{state_user}".')
+
+                    continue
+
+                logger.info(task_name)
+
+                @self.db.tx
+                def F(tx):
+                    tx.execute('''
+                            INSERT INTO task_history (task_id, state_id,
+                                                      reason_id)
+                            VALUES (%s, %s, %s)
+                            ''', (task_id, self._ts.rlookup('ts_waiting'),
+                                  self._tr.rlookup('tr_task_uncancel')))
 
     def unsynthesize(self, args):
         names = args.name

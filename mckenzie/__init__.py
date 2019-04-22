@@ -108,6 +108,12 @@ class McKenzie:
         p_task_add.add_argument('--depends-on', metavar='DEP', action='append', help='make DEP a dependency of the new task')
         p_task_add.add_argument('name', help='name for the new task')
 
+        # task cancel
+        p_task_cancel = p_task_sub.add_parser('cancel', help='change task state to "cancelled"')
+        p_task_cancel.add_argument('--skip-clean', action='store_true', help='skip the cleanup step')
+        p_task_cancel.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
+        p_task_cancel.add_argument('name', nargs='*', help='task name')
+
         # task clean
         p_task_clean = p_task_sub.add_parser('clean', help='run cleanup command')
         p_task_clean.add_argument('--allow-unsynthesized', action='store_true', help='clean tasks that are done but not synthesized')
@@ -160,6 +166,11 @@ class McKenzie:
         # task synthesize
         p_task_synthesize = p_task_sub.add_parser('synthesize', help='synthesize completed tasks')
         p_task_synthesize.add_argument('--forever', action='store_true', help='wait for more tasks when done')
+
+        # task uncancel
+        p_task_uncancel = p_task_sub.add_parser('uncancel', help='change "cancelled" task state to "waiting"')
+        p_task_uncancel.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
+        p_task_uncancel.add_argument('name', nargs='*', help='task name')
 
         # task unsynthesize
         p_task_unsynthesize = p_task_sub.add_parser('unsynthesize', help='unsynthesize tasks')
