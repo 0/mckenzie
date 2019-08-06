@@ -232,6 +232,7 @@ class TaskManager(Manager):
         mem_limit_mb = args.mem * 1024
         priority = args.priority
         depends_on = args.depends_on
+        soft_depends_on = args.soft_depends_on
         name = args.name
 
         if held:
@@ -245,6 +246,11 @@ class TaskManager(Manager):
             dependency_names = set(depends_on)
         else:
             dependency_names = set()
+
+        if soft_depends_on is not None:
+            soft_dependency_names = set(soft_depends_on)
+        else:
+            soft_dependency_names = set()
 
         @self.db.tx
         def F(tx):
@@ -280,8 +286,11 @@ class TaskManager(Manager):
                     ''', (task_id, self._ts.rlookup('ts_new'),
                           self._tr.rlookup('tr_task_add_new')))
 
-            with tx.advisory(AdvisoryKey.TASK_DEPENDENCY_ACCESS):
-                for dependency_name in dependency_names:
+            tx.advisory_lock(AdvisoryKey.TASK_DEPENDENCY_ACCESS, xact=True)
+
+            for is_soft, names in [(False, dependency_names),
+                                   (True, soft_dependency_names)]:
+                for dependency_name in names:
                     dependency = tx.execute('''
                             SELECT id
                             FROM task
@@ -299,9 +308,10 @@ class TaskManager(Manager):
                     try:
                         tx.execute('''
                                 INSERT INTO task_dependency (task_id,
-                                                             dependency_id)
-                                VALUES (%s, %s)
-                                ''', (task_id, dependency_id))
+                                                             dependency_id,
+                                                             soft)
+                                VALUES (%s, %s, %s)
+                                ''', (task_id, dependency_id, is_soft))
                     except CheckViolation as e:
                         if e.constraint_name == 'self_dependency':
                             logger.error('Task cannot depend on itself.')
@@ -484,6 +494,7 @@ class TaskManager(Manager):
                                     JOIN task t ON t.id = td.task_id
                                     JOIN task_state ts ON ts.id = t.state_id
                                     WHERE td.dependency_id = %s
+                                    AND NOT td.soft
                                     ''', (self.ident, task_id))
 
                         dependent_any_claim_failed = False

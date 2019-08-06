@@ -78,8 +78,13 @@ class Transaction:
         else:
             self.curs.connection.rollback()
 
-    def _advisory_do(self, action, key, *, shared=False):
-        name_pieces = ['pg', 'advisory', '{}']
+    def _advisory_do(self, action, key, *, xact=False, shared=False):
+        name_pieces = ['pg', 'advisory']
+
+        if xact:
+            name_pieces.append('xact')
+
+        name_pieces.append('{}')
 
         if shared:
             name_pieces.append('shared')

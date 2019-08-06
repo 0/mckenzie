@@ -106,6 +106,7 @@ class McKenzie:
         p_task_add.add_argument('--mem', metavar='M', type=float, required=True, help='memory limit in GB')
         p_task_add.add_argument('--priority', metavar='P', type=int, default=0, help='task priority (default: 0)')
         p_task_add.add_argument('--depends-on', metavar='DEP', action='append', help='make DEP a dependency of the new task')
+        p_task_add.add_argument('--soft-depends-on', metavar='DEP', action='append', help='make DEP a soft dependency of the new task')
         p_task_add.add_argument('name', help='name for the new task')
 
         # task cancel
