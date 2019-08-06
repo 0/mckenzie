@@ -10,6 +10,14 @@ from .util import print_table
 logger = logging.getLogger(__name__)
 
 
+# Task state flow:
+#
+#       held <----+<--------+
+#       ^  |      ^         ^
+#       |  v      |         |
+# new ->+->+-> waiting -> ready
+
+
 class TaskState(DatabaseView):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -139,10 +147,24 @@ class TaskManager(Manager):
                     total=('Total', (1, 2)))
 
     def add(self, args):
+        held = args.held
         time_limit = timedelta(hours=args.time)
         mem_limit_mb = args.mem * 1024
         priority = args.priority
+        depends_on = args.depends_on
         name = args.name
+
+        if held:
+            state_id = self._ts.rlookup('ts_held')
+            reason_id = self._tr.rlookup('tr_task_add_held')
+        else:
+            state_id = self._ts.rlookup('ts_waiting')
+            reason_id = self._tr.rlookup('tr_task_add_waiting')
+
+        if depends_on is not None:
+            dependency_names = set(depends_on)
+        else:
+            dependency_names = set()
 
         @self.db.tx
         def F(tx):
@@ -178,7 +200,123 @@ class TaskManager(Manager):
                     ''', (task_id, self._ts.rlookup('ts_new'),
                           self._tr.rlookup('tr_task_add_new')))
 
+            for dependency_name in dependency_names:
+                dependency = tx.execute('''
+                        SELECT id
+                        FROM task
+                        WHERE name = %s
+                        ''', (dependency_name,))
+
+                if len(dependency) == 0:
+                    logger.error(f'No such task "{dependency_name}".')
+                    tx.rollback()
+
+                    return
+
+                dependency_id, = dependency[0]
+
+                try:
+                    tx.execute('''
+                            INSERT INTO task_dependency (task_id,
+                                                         dependency_id)
+                            VALUES (%s, %s)
+                            ''', (task_id, dependency_id))
+                except CheckViolation as e:
+                    if e.constraint_name == 'self_dependency':
+                        logger.error('Task cannot depend on itself.')
+                        tx.rollback()
+
+                        return
+                    else:
+                        raise
+
+            tx.execute('''
+                    INSERT INTO task_history (task_id, state_id, reason_id)
+                    VALUES (%s, %s, %s)
+                    ''', (task_id, state_id, reason_id))
+
             self._unclaim(tx, task_id, self.ident)
+
+    def hold(self, args):
+        all_tasks = args.all
+        names = args.name
+
+        task_names = {name: True for name in names}
+
+        with ClaimStack(self) as cs:
+            if all_tasks:
+                @self.db.tx
+                def tasks(tx):
+                    # All holdable, claimable tasks.
+                    return tx.execute('''
+                            WITH holdable_tasks AS (
+                                SELECT t.id, t.name
+                                FROM task t
+                                JOIN task_state ts ON ts.id = t.state_id
+                                WHERE ts.holdable
+                                FOR UPDATE OF t
+                            )
+                            SELECT id, name
+                            FROM holdable_tasks
+                            WHERE task_claim(id, %s)
+                            ''', (self.ident,))
+
+                for task_id, task_name in tasks:
+                    cs.add(task_id)
+
+                    if task_name not in task_names:
+                        task_names[task_name] = False
+
+            for task_name, requested in task_names.items():
+                @self.db.tx
+                def task(tx):
+                    return tx.execute('''
+                            SELECT t.id, t.state_id, ts.holdable,
+                                   task_claim(t.id, %s)
+                            FROM task t
+                            JOIN task_state ts ON ts.id = t.state_id
+                            WHERE t.name = %s
+                            ''', (self.ident, task_name))
+
+                if len(task) == 0:
+                    logger.warning(f'Task "{task_name}" does not exist.')
+
+                    continue
+
+                task_id, state_id, holdable, claim_success = task[0]
+                state = self._ts.lookup(state_id)
+                state_user = self._ts.lookup(state_id, user=True)
+
+                if claim_success:
+                    cs.add(task_id)
+                else:
+                    if requested:
+                        logger.warning(f'Task "{task_name}" could not be '
+                                        'claimed.')
+
+                    continue
+
+                if not holdable:
+                    if requested:
+                        if state == 'ts_held':
+                            logger.warning(f'Task "{task_name}" is already '
+                                           'held.')
+                        else:
+                            logger.warning(f'Task "{task_name}" is in state '
+                                           f'"{state_user}".')
+
+                    continue
+
+                @self.db.tx
+                def F(tx):
+                    tx.execute('''
+                            INSERT INTO task_history (task_id, state_id,
+                                                      reason_id)
+                            VALUES (%s, %s, %s)
+                            ''', (task_id, self._ts.rlookup('ts_held'),
+                                  self._tr.rlookup('tr_task_hold')))
+
+                logger.info(task_name)
 
     def list(self, args):
         state_name = args.state
@@ -197,7 +335,8 @@ class TaskManager(Manager):
         @self.db.tx
         def tasks(tx):
             query = '''
-                    SELECT name, state_id, priority, time_limit, mem_limit_mb
+                    SELECT name, state_id, priority, time_limit, mem_limit_mb,
+                           num_dependencies, num_dependencies_pending
                     FROM task
                     '''
             query_args = ()
@@ -220,10 +359,88 @@ class TaskManager(Manager):
 
         task_data = []
 
-        for name, state_id, priority, time_limit, mem_limit in tasks:
+        for (name, state_id, priority, time_limit, mem_limit, num_dep,
+                num_dep_pend) in tasks:
             state_user = self._ts.lookup(state_id, user=True)
 
-            task_data.append([name, state_user, priority, time_limit,
+            dep = f'{num_dep-num_dep_pend}/{num_dep}'
+
+            task_data.append([name, state_user, dep, priority, time_limit,
                               mem_limit])
 
-        print_table(['Name', 'State', 'P', 'Time', 'Mem (MB)'], task_data)
+        print_table(['Name', 'State', 'Dep', 'P', 'Time', 'Mem (MB)'],
+                    task_data)
+
+    def release(self, args):
+        all_tasks = args.all
+        names = args.name
+
+        task_names = {name: True for name in names}
+
+        with ClaimStack(self) as cs:
+            if all_tasks:
+                @self.db.tx
+                def tasks(tx):
+                    # All held, claimable tasks.
+                    return tx.execute('''
+                            WITH held_tasks AS (
+                                SELECT id, name
+                                FROM task
+                                WHERE state_id = %s
+                                FOR UPDATE
+                            )
+                            SELECT id, name
+                            FROM held_tasks
+                            WHERE task_claim(id, %s)
+                            ''', (self._ts.rlookup('ts_held'), self.ident))
+
+                for task_id, task_name in tasks:
+                    cs.add(task_id)
+
+                    if task_name not in task_names:
+                        task_names[task_name] = False
+
+            for task_name, requested in task_names.items():
+                @self.db.tx
+                def task(tx):
+                    return tx.execute('''
+                            SELECT id, state_id, task_claim(id, %s)
+                            FROM task
+                            WHERE name = %s
+                            ''', (self.ident, task_name))
+
+                if len(task) == 0:
+                    logger.warning(f'Task "{task_name}" does not exist.')
+
+                    continue
+
+                task_id, state_id, claim_success = task[0]
+                state = self._ts.lookup(state_id)
+                state_user = self._ts.lookup(state_id, user=True)
+
+                if claim_success:
+                    cs.add(task_id)
+                else:
+                    if requested:
+                        logger.warning(f'Task "{task_name}" could not be '
+                                       'claimed.')
+
+                    continue
+
+                if state != 'ts_held':
+                    if requested:
+                        logger.warning(f'Task "{task_name}" is in state '
+                                       f'"{state_user}".')
+
+                    continue
+
+                @self.db.tx
+                def F(tx):
+                    tx.execute('''
+                            INSERT INTO task_history (task_id, state_id,
+                                                      reason_id)
+                            VALUES (%s, %s, %s)
+                            ''', (task_id, self._ts.rlookup('ts_waiting'),
+                                  self._tr.rlookup('tr_task_release')))
+
+                logger.info(task_name)

@@ -83,10 +83,22 @@ class McKenzie:
 
         # task add
         p_task_add = p_task_sub.add_parser('add', help='create a new task')
+        p_task_add.add_argument('--held', action='store_true', help='create task in "held" state')
         p_task_add.add_argument('--time', metavar='T', type=float, required=True, help='time limit in hours')
         p_task_add.add_argument('--mem', metavar='M', type=float, required=True, help='memory limit in GB')
         p_task_add.add_argument('--priority', metavar='P', type=int, default=0, help='task priority (default: 0)')
+        p_task_add.add_argument('--depends-on', metavar='DEP', action='append', help='make DEP a dependency of the new task')
         p_task_add.add_argument('name', help='name for the new task')
+
+        # task hold
+        p_task_hold = p_task_sub.add_parser('hold', help='change task state to "held"')
+        p_task_hold.add_argument('--all', action='store_true', help='try to hold all possible tasks in addition to named tasks')
+        p_task_hold.add_argument('name', nargs='*', help='task name')
+
+        # task release
+        p_task_release = p_task_sub.add_parser('release', help='change "held" task state to "waiting"')
+        p_task_release.add_argument('--all', action='store_true', help='try to release all held tasks in addition to named tasks')
+        p_task_release.add_argument('name', nargs='*', help='task name')
 
         # task list
         p_task_list = p_task_sub.add_parser('list', help='list tasks')
