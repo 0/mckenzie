@@ -2,6 +2,8 @@ import argparse
 from collections import defaultdict
 import logging
 import os
+import signal
+from threading import Event
 
 from .batch import BatchManager
 from .color import Colorizer
@@ -298,10 +300,19 @@ class McKenzie:
 
         mck.call_manager(args)
 
+    def _interrupt(self, signum=None, frame=None):
+        logger.debug('Interrupted.')
+        self.interrupted.set()
+        # If we recieve the signal again, abort in the usual fashion.
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+
     def __init__(self, conf_path):
         self.conf = Conf(conf_path)
 
         self.colorizer = Colorizer()
+
+        self.interrupted = Event()
+        signal.signal(signal.SIGINT, self._interrupt)
 
         self.unsafe = self.conf.general_unsafe
 

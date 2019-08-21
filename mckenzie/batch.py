@@ -41,6 +41,9 @@ class BatchManager(Manager):
 
         try:
             for i, pre_line in enumerate(lines):
+                if self.mck.interrupted.is_set():
+                    break
+
                 line = pre_line.rstrip()
                 batch_args = parser.parse_args(shlex.split(line))
 

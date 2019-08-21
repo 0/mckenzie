@@ -2,9 +2,7 @@ from contextlib import ExitStack
 from datetime import timedelta
 import logging
 import os
-import signal
 import subprocess
-from threading import Event
 
 from .base import (DatabaseNoteView, DatabaseReasonView, DatabaseStateView,
                    Manager)
@@ -151,7 +149,7 @@ class TaskManager(Manager):
 
             raise HandledException()
 
-    def _run_cmd(self, cmd, *args, setpgrp=False):
+    def _run_cmd(self, cmd, *args):
         if cmd is None:
             return True
 
@@ -159,18 +157,16 @@ class TaskManager(Manager):
             'cwd': self.conf.general_chdir,
             'capture_output': True,
             'text': True,
-        }
-
-        if setpgrp:
             # Prevent the child process from receiving any signals sent to this
             # process.
-            kwargs['preexec_fn'] = os.setpgrp
+            'preexec_fn': os.setpgrp,
+        }
 
         proc = subprocess.run((cmd,) + args, **kwargs)
 
         return check_proc(proc, log=logger.error)
 
-    def _clean(self, task_name, *, partial=False, **kwargs):
+    def _clean(self, task_name, *, partial=False):
         args = []
 
         if partial:
@@ -178,15 +174,14 @@ class TaskManager(Manager):
 
         args.append(task_name)
 
-        return self._run_cmd(self.conf.task_cleanup_cmd, *args, **kwargs)
+        return self._run_cmd(self.conf.task_cleanup_cmd, *args)
 
-    def _synthesize(self, task_name, elapsed_time_hours, max_mem_gb, **kwargs):
+    def _synthesize(self, task_name, elapsed_time_hours, max_mem_gb):
         return self._run_cmd(self.conf.task_synthesize_cmd, task_name,
-                             elapsed_time_hours, max_mem_gb, **kwargs)
+                             elapsed_time_hours, max_mem_gb)
 
-    def _unsynthesize(self, task_name, **kwargs):
-        return self._run_cmd(self.conf.task_unsynthesize_cmd, task_name,
-                             **kwargs)
+    def _unsynthesize(self, task_name):
+        return self._run_cmd(self.conf.task_unsynthesize_cmd, task_name)
 
     def _task_clean(self, cs, task_name, task, *, partial=False,
                     req_state_id=None, requested=False,
@@ -452,6 +447,9 @@ class TaskManager(Manager):
                     task_names[task_name] = False
 
         for task_name, requested in task_names.items():
+            if self.mck.interrupted.is_set():
+                break
+
             @self.db.tx
             def task(tx):
                 return tx.execute('''
@@ -540,6 +538,9 @@ class TaskManager(Manager):
                     task_names[task_name] = False
 
         for task_name, requested in task_names.items():
+            if self.mck.interrupted.is_set():
+                break
+
             @self.db.tx
             def task(tx):
                 return tx.execute('''
@@ -580,15 +581,7 @@ class TaskManager(Manager):
 
             return
 
-        done = Event()
-
-        def quit(signum=None, frame=None):
-            logger.debug('Quitting.')
-            done.set()
-
-        signal.signal(signal.SIGINT, quit)
-
-        while not done.is_set():
+        while not self.mck.interrupted.is_set():
             logger.debug('Selecting next task.')
 
             @self.db.tx
@@ -610,9 +603,8 @@ class TaskManager(Manager):
 
             if len(task) == 0:
                 logger.debug('No tasks found.')
-                quit()
 
-                continue
+                break
 
             task_id, task_name, claim_success = task[0]
 
@@ -628,7 +620,7 @@ class TaskManager(Manager):
 
                 logger.debug('Running cleanup command.')
 
-                if not self._clean(task_name, partial=True, setpgrp=True):
+                if not self._clean(task_name, partial=True):
                     return
 
                 @self.db.tx
@@ -647,17 +639,9 @@ class TaskManager(Manager):
 
             return
 
-        done = Event()
-
-        def quit(signum=None, frame=None):
-            logger.debug('Quitting.')
-            done.set()
-
-        signal.signal(signal.SIGINT, quit)
-
         task_names = []
 
-        while not done.is_set():
+        while not self.mck.interrupted.is_set():
             logger.debug('Selecting next task.')
 
             if not task_names:
@@ -680,9 +664,8 @@ class TaskManager(Manager):
 
             if not task_names:
                 logger.debug('No tasks found.')
-                quit()
 
-                continue
+                break
 
             task_name = task_names.pop()
 
@@ -751,6 +734,9 @@ class TaskManager(Manager):
                         task_names[task_name] = False
 
             for task_name, requested in task_names.items():
+                if self.mck.interrupted.is_set():
+                    break
+
                 logger.debug(f'Holding task "{task_name}".')
 
                 @self.db.tx
@@ -914,6 +900,9 @@ class TaskManager(Manager):
                     task_names[task_name] = False
 
         for task_name, requested in task_names.items():
+            if self.mck.interrupted.is_set():
+                break
+
             logger.debug(f'Marking "{task_name}" for clean.')
 
             @self.db.tx
@@ -990,6 +979,9 @@ class TaskManager(Manager):
                         task_names[task_name] = False
 
             for task_name, requested in task_names.items():
+                if self.mck.interrupted.is_set():
+                    break
+
                 logger.debug(f'Releasing task "{task_name}".')
 
                 @self.db.tx
@@ -1187,6 +1179,9 @@ class TaskManager(Manager):
         names = args.name
 
         for task_name in names:
+            if self.mck.interrupted.is_set():
+                break
+
             logger.debug(f'Resetting claim on "{task_name}".')
 
             @self.db.tx
@@ -1232,6 +1227,9 @@ class TaskManager(Manager):
                 cs.add(task_id)
 
             for task_id, task_name in tasks:
+                if self.mck.interrupted.is_set():
+                    break
+
                 logger.info(task_name)
 
                 if not skip_clean and not self._clean(task_name):
@@ -1425,15 +1423,7 @@ class TaskManager(Manager):
 
             return
 
-        done = Event()
-
-        def quit(signum=None, frame=None):
-            logger.debug('Quitting.')
-            done.set()
-
-        signal.signal(signal.SIGINT, quit)
-
-        while not done.is_set():
+        while not self.mck.interrupted.is_set():
             logger.debug('Selecting next task.')
 
             @self.db.tx
@@ -1456,9 +1446,8 @@ class TaskManager(Manager):
 
             if len(task) == 0:
                 logger.debug('No tasks found.')
-                quit()
 
-                continue
+                break
 
             (task_id, task_name, elapsed_time, max_mem_mb,
                     claim_success) = task[0]
@@ -1479,7 +1468,7 @@ class TaskManager(Manager):
                 logger.debug('Running synthesis command.')
 
                 if not self._synthesize(task_name, str(elapsed_time_hours),
-                                        str(max_mem_gb), setpgrp=True):
+                                        str(max_mem_gb)):
                     return
 
                 @self.db.tx
@@ -1513,6 +1502,9 @@ class TaskManager(Manager):
                     task_names[task_name] = False
 
         for task_name, requested in task_names.items():
+            if self.mck.interrupted.is_set():
+                break
+
             @self.db.tx
             def task(tx):
                 return tx.execute('''
@@ -1566,6 +1558,9 @@ class TaskManager(Manager):
             return
 
         for task_name in names:
+            if self.mck.interrupted.is_set():
+                break
+
             @self.db.tx
             def task(tx):
                 return tx.execute('''

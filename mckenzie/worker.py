@@ -590,6 +590,9 @@ class WorkerManager(Manager):
                     ''', (self._ws.rlookup('ws_failed'),))
 
         for slurm_job_id, in workers:
+            if self.mck.interrupted.is_set():
+                break
+
             logger.info(slurm_job_id)
 
     def clean(self, args):
@@ -600,6 +603,9 @@ class WorkerManager(Manager):
         ok_worker_ids = []
 
         while True:
+            if self.mck.interrupted.is_set():
+                break
+
             @self.db.tx
             def result(tx):
                 query = '''
@@ -887,6 +893,9 @@ class WorkerManager(Manager):
                 slurm_job_ids.add(slurm_job_id)
 
         for slurm_job_id in slurm_job_ids:
+            if self.mck.interrupted.is_set():
+                break
+
             # Try to cancel it before it gets a chance to run.
             logger.debug(f'Attempting to cancel worker {slurm_job_id}.')
 
@@ -1174,6 +1183,9 @@ class WorkerManager(Manager):
                 '''
 
         for _ in range(num):
+            if self.mck.interrupted.is_set():
+                break
+
             logger.debug('Spawning worker job.')
 
             proc = subprocess.run(proc_args, input=script.strip(),
