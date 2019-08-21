@@ -193,6 +193,112 @@ class TaskManager(Manager):
         return self._run_cmd(self.conf.task_unsynthesize_cmd, task_name,
                              **kwargs)
 
+    def _task_clean(self, cs, task_name, task, *, partial=False,
+                    req_state_id=None, requested=False,
+                    allow_unsynthesized=False,
+                    ignore_pending_dependents=False):
+        task_id, state_id, synthesized, claim_success = task
+
+        state = self._ts.lookup(state_id)
+        state_user = self._ts.lookup(state_id, user=True)
+
+        if ((req_state_id is not None and state_id != req_state_id)
+                or state == 'ts_running'):
+            if requested:
+                logger.warning(f'Task "{task_name}" is in state '
+                               f'"{state_user}".')
+
+            return False
+
+        if state == 'ts_done':
+            if not allow_unsynthesized and not synthesized:
+                if requested:
+                    logger.warning(f'Task "{task_name}" is not '
+                                   'synthesized.')
+
+                return False
+
+        with self.db.advisory(AdvisoryKey.TASK_DEPENDENCY_ACCESS,
+                              shared=True):
+            if not partial and state == 'ts_done':
+                @self.db.tx
+                def task_direct_dependents(tx):
+                    return tx.execute('''
+                            SELECT td.task_id,
+                                   task_claim(td.task_id, %s),
+                                   ts.pending
+                            FROM task_dependency td
+                            JOIN task t ON t.id = td.task_id
+                            JOIN task_state ts ON ts.id = t.state_id
+                            WHERE td.dependency_id = %s
+                            AND NOT td.soft
+                            ''', (self.ident, task_id))
+
+                dependent_any_claim_failed = False
+                dependent_any_pending = False
+
+                for (dependent_id, dependent_claim_success,
+                        dependent_pending) in task_direct_dependents:
+                    if dependent_claim_success:
+                        cs.add(dependent_id)
+                    else:
+                        dependent_any_claim_failed = True
+
+                    if dependent_pending:
+                        dependent_any_pending = True
+
+                if dependent_any_claim_failed:
+                    if requested:
+                        logger.warning('Failed to claim dependent of '
+                                       f'task "{task_name}".')
+
+                    return False
+
+                if (not ignore_pending_dependents
+                        and dependent_any_pending):
+                    if requested:
+                        logger.warning(f'Task "{task_name}" has '
+                                       'pending dependents.')
+
+                    return False
+
+            logger.info(task_name)
+
+            if state != 'ts_cleaned':
+                if not self._clean(task_name, partial=partial):
+                    return None
+
+            @self.db.tx
+            def F(tx):
+                tx.execute('''
+                        UPDATE task
+                        SET marked_for_clean = FALSE
+                        WHERE id = %s
+                        ''', (task_id,))
+
+            if state == 'ts_done':
+                if partial:
+                    @self.db.tx
+                    def F(tx):
+                        tx.execute('''
+                                UPDATE task
+                                SET partial_cleaned = TRUE
+                                WHERE id = %s
+                                ''', (task_id,))
+                else:
+                    @self.db.tx
+                    def F(tx):
+                        tx.execute('''
+                                INSERT INTO task_history (task_id,
+                                                          state_id,
+                                                          reason_id)
+                                VALUES (%s, %s, %s)
+                                ''', (task_id,
+                                      self._ts.rlookup('ts_cleaned'),
+                                      self._tr.rlookup('tr_task_clean')))
+
+        return True
+
     def summary(self, args):
         @self.db.tx
         def tasks(tx):
@@ -453,8 +559,6 @@ class TaskManager(Manager):
                 continue
 
             task_id, state_id, synthesized, claim_success = task[0]
-            state = self._ts.lookup(state_id)
-            state_user = self._ts.lookup(state_id, user=True)
 
             if not claim_success:
                 if requested:
@@ -465,92 +569,15 @@ class TaskManager(Manager):
             with ClaimStack(self) as cs:
                 cs.add(task_id)
 
-                if ((req_state_id is not None and state_id != req_state_id)
-                        or state == 'ts_running'):
-                    if requested:
-                        logger.warning(f'Task "{task_name}" is in state '
-                                       f'"{state_user}".')
+                result = self._task_clean(cs, task_name, task[0],
+                                          partial=partial,
+                                          req_state_id=req_state_id,
+                                          requested=requested,
+                                          allow_unsynthesized=allow_unsynthesized,
+                                          ignore_pending_dependents=ignore_pending_dependents)
 
-                    continue
-
-                if state == 'ts_done':
-                    if not allow_unsynthesized and not synthesized:
-                        if requested:
-                            logger.warning(f'Task "{task_name}" is not '
-                                           'synthesized.')
-
-                        continue
-
-                with self.db.advisory(AdvisoryKey.TASK_DEPENDENCY_ACCESS,
-                                      shared=True):
-                    if not partial and state == 'ts_done':
-                        @self.db.tx
-                        def task_direct_dependents(tx):
-                            return tx.execute('''
-                                    SELECT td.task_id,
-                                           task_claim(td.task_id, %s),
-                                           ts.pending
-                                    FROM task_dependency td
-                                    JOIN task t ON t.id = td.task_id
-                                    JOIN task_state ts ON ts.id = t.state_id
-                                    WHERE td.dependency_id = %s
-                                    AND NOT td.soft
-                                    ''', (self.ident, task_id))
-
-                        dependent_any_claim_failed = False
-                        dependent_any_pending = False
-
-                        for (dependent_id, dependent_claim_success,
-                                dependent_pending) in task_direct_dependents:
-                            if dependent_claim_success:
-                                cs.add(dependent_id)
-                            else:
-                                dependent_any_claim_failed = True
-
-                            if dependent_pending:
-                                dependent_any_pending = True
-
-                        if dependent_any_claim_failed:
-                            if requested:
-                                logger.warning('Failed to claim dependent of '
-                                               f'task "{task_name}".')
-
-                            continue
-
-                        if (not ignore_pending_dependents
-                                and dependent_any_pending):
-                            if requested:
-                                logger.warning(f'Task "{task_name}" has '
-                                               'pending dependents.')
-
-                            continue
-
-                    logger.info(task_name)
-
-                    if state != 'ts_cleaned':
-                        if not self._clean(task_name, partial=partial):
-                            return
-
-                    if state == 'ts_done':
-                        if partial:
-                            @self.db.tx
-                            def F(tx):
-                                tx.execute('''
-                                        UPDATE task
-                                        SET partial_cleaned = TRUE
-                                        WHERE id = %s
-                                        ''', (task_id,))
-                        else:
-                            @self.db.tx
-                            def F(tx):
-                                tx.execute('''
-                                        INSERT INTO task_history (task_id,
-                                                                  state_id,
-                                                                  reason_id)
-                                        VALUES (%s, %s, %s)
-                                        ''', (task_id,
-                                              self._ts.rlookup('ts_cleaned'),
-                                              self._tr.rlookup('tr_task_clean')))
+                if result is None:
+                    return
 
     def clean_all_partial(self, args):
         forever = args.forever
@@ -623,6 +650,85 @@ class TaskManager(Manager):
                             SET partial_cleaned = TRUE
                             WHERE id = %s
                             ''', (task_id,))
+
+        logger.debug('Exited cleanly.')
+
+    def clean_marked(self, args):
+        if self.conf.task_cleanup_cmd is None:
+            logger.warning('No cleanup command defined.')
+
+            return
+
+        done = Event()
+
+        def quit(signum=None, frame=None):
+            logger.debug('Quitting.')
+            done.set()
+
+        signal.signal(signal.SIGINT, quit)
+
+        task_names = []
+
+        while not done.is_set():
+            logger.debug('Selecting next task.')
+
+            if not task_names:
+                logger.debug('Fetching new batch.')
+
+                @self.db.tx
+                def tasks(tx):
+                    return tx.execute('''
+                            SELECT name
+                            FROM task
+                            WHERE state_id = %s
+                            AND marked_for_clean
+                            AND synthesized
+                            AND claimed_by IS NULL
+                            LIMIT 1000
+                            ''', (self._ts.rlookup('ts_done'),))
+
+                for task_name, in tasks:
+                    task_names.append(task_name)
+
+            if not task_names:
+                logger.debug('No tasks found.')
+                quit()
+
+                continue
+
+            task_name = task_names.pop()
+
+            @self.db.tx
+            def task(tx):
+                return tx.execute('''
+                        SELECT id, state_id, synthesized, marked_for_clean,
+                               task_claim(id, %s)
+                        FROM task
+                        WHERE name = %s
+                        ''', (self.ident, task_name))
+
+            (task_id, state_id, synthesized, marked_for_clean,
+                    claim_success) = task[0]
+
+            if not claim_success:
+                logger.debug(f'Failed to claim task "{task_name}".')
+
+                continue
+
+            with ClaimStack(self) as cs:
+                cs.add(task_id)
+
+                if not marked_for_clean:
+                    logger.debug(f'Task "{task_name}" not marked for clean.')
+
+                    continue
+
+                result = self._task_clean(cs, task_name,
+                                          (task_id, state_id, synthesized,
+                                           claim_success))
+
+                if result is None:
+                    return
 
         logger.debug('Exited cleanly.')
 
@@ -789,6 +895,82 @@ class TaskManager(Manager):
 
         self.print_table(['Name', 'State', 'Claimed by', 'Since', 'For'],
                          task_data)
+
+    def mark_for_clean(self, args):
+        name_pattern = args.name_pattern
+        state_name = args.state
+        names = args.name
+
+        req_state_id = self._parse_state(state_name)
+
+        task_names = {name: True for name in names}
+
+        if name_pattern is not None:
+            @self.db.tx
+            def tasks(tx):
+                query = '''
+                        SELECT name
+                        FROM task
+                        WHERE name LIKE %s
+                        '''
+                query_args = (name_pattern,)
+
+                if req_state_id is not None:
+                    query += ' AND state_id = %s'
+                    query_args += (req_state_id,)
+
+                return tx.execute(query, query_args)
+
+            for (task_name,) in tasks:
+                if task_name not in task_names:
+                    task_names[task_name] = False
+
+        for task_name, requested in task_names.items():
+            logger.debug(f'Marking "{task_name}" for clean.')
+
+            @self.db.tx
+            def task(tx):
+                return tx.execute('''
+                        SELECT id, state_id, task_claim(id, %s)
+                        FROM task
+                        WHERE name = %s
+                        ''', (self.ident, task_name))
+
+            if len(task) == 0:
+                logger.warning(f'Task "{task_name}" does not exist.')
+
+                continue
+
+            task_id, state_id, claim_success = task[0]
+            state = self._ts.lookup(state_id)
+            state_user = self._ts.lookup(state_id, user=True)
+
+            if not claim_success:
+                if requested:
+                    logger.warning(f'Task "{task_name}" could not be claimed.')
+
+                continue
+
+            with ClaimStack(self) as cs:
+                cs.add(task_id)
+
+                if ((req_state_id is not None and state_id != req_state_id)
+                        or state == 'ts_cleaned'):
+                    if requested:
+                        logger.warning(f'Task "{task_name}" is in state '
+                                       f'"{state_user}".')
+
+                    continue
+
+                @self.db.tx
+                def F(tx):
+                    tx.execute('''
+                            UPDATE task
+                            SET marked_for_clean = TRUE
+                            WHERE id = %s
+                            ''', (task_id,))
+
+            logger.info(task_name)
 
     def release(self, args):
         all_tasks = args.all

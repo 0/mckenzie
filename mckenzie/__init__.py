@@ -128,6 +128,9 @@ class McKenzie:
         p_task_clean_all_partial = p_task_sub.add_parser('clean-all-partial', help='run partial cleanup command for eligible tasks')
         p_task_clean_all_partial.add_argument('--forever', action='store_true', help='wait for more tasks when done')
 
+        # task clean-marked
+        p_task_clean_marked = p_task_sub.add_parser('clean-marked', help='run cleanup command for marked tasks')
+
         # task hold
         p_task_hold = p_task_sub.add_parser('hold', help='change task state to "held"')
         p_task_hold.add_argument('--all', action='store_true', help='try to hold all possible tasks in addition to named tasks')
@@ -149,6 +152,12 @@ class McKenzie:
 
         # task list-claimed
         p_task_list_claimed = p_task_sub.add_parser('list-claimed', help='list claimed tasks')
+
+        # task mark-for-clean
+        p_task_mark_for_clean = p_task_sub.add_parser('mark-for-clean', help='mark tasks as requiring cleaning')
+        p_task_mark_for_clean.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
+        p_task_mark_for_clean.add_argument('--state', metavar='S', help='only tasks in state S')
+        p_task_mark_for_clean.add_argument('name', nargs='*', help='task name')
 
         # task rerun
         p_task_rerun = p_task_sub.add_parser('rerun', help='rerun a task and all its dependents')
