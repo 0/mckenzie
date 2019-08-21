@@ -79,11 +79,6 @@ class ClaimStack(ExitStack):
 
 
 class TaskManager(Manager):
-    # 1 minute
-    CLEAN_ALL_PARTIAL_WAIT_SECONDS = 60
-    # 1 minute
-    SYNTHESIZE_WAIT_SECONDS = 60
-
     STATE_ORDER = ['new', 'cancelled', 'held', 'waiting', 'ready', 'running',
                    'failed (!)', 'done (!)', 'done', 'cleaned (!)', 'cleaned']
 
@@ -580,8 +575,6 @@ class TaskManager(Manager):
                     return
 
     def clean_all_partial(self, args):
-        forever = args.forever
-
         if self.conf.task_cleanup_cmd is None:
             logger.warning('No cleanup command defined.')
 
@@ -617,12 +610,7 @@ class TaskManager(Manager):
 
             if len(task) == 0:
                 logger.debug('No tasks found.')
-
-                if forever:
-                    logger.debug('Taking a break.')
-                    done.wait(self.CLEAN_ALL_PARTIAL_WAIT_SECONDS)
-                else:
-                    quit()
+                quit()
 
                 continue
 
@@ -1432,8 +1420,6 @@ class TaskManager(Manager):
             print('Not claimed.')
 
     def synthesize(self, args):
-        forever = args.forever
-
         if self.conf.task_synthesize_cmd is None:
             logger.warning('No synthesis command defined.')
 
@@ -1470,12 +1456,7 @@ class TaskManager(Manager):
 
             if len(task) == 0:
                 logger.debug('No tasks found.')
-
-                if forever:
-                    logger.debug('Taking a break.')
-                    done.wait(self.SYNTHESIZE_WAIT_SECONDS)
-                else:
-                    quit()
+                quit()
 
                 continue
 

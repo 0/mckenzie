@@ -126,7 +126,6 @@ class McKenzie:
 
         # task clean-all-partial
         p_task_clean_all_partial = p_task_sub.add_parser('clean-all-partial', help='run partial cleanup command for eligible tasks')
-        p_task_clean_all_partial.add_argument('--forever', action='store_true', help='wait for more tasks when done')
 
         # task clean-marked
         p_task_clean_marked = p_task_sub.add_parser('clean-marked', help='run cleanup command for marked tasks')
@@ -175,7 +174,6 @@ class McKenzie:
 
         # task synthesize
         p_task_synthesize = p_task_sub.add_parser('synthesize', help='synthesize completed tasks')
-        p_task_synthesize.add_argument('--forever', action='store_true', help='wait for more tasks when done')
 
         # task uncancel
         p_task_uncancel = p_task_sub.add_parser('uncancel', help='change "cancelled" task state to "waiting"')
