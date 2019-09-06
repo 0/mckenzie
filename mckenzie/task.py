@@ -839,7 +839,8 @@ class TaskManager(Manager):
             task_data.append([name, (state_user, state_color), dep, priority,
                               time_limit, mem_limit])
 
-        self.print_table(['Name', 'State', 'Dep', 'P', 'Time', 'Mem (MB)'],
+        self.print_table(['Name', 'State', 'Dep', 'Priority', 'Time',
+                          'Mem (MB)'],
                          task_data)
 
     def list_claimed(self, args):
