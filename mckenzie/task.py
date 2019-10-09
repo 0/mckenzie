@@ -1,5 +1,6 @@
 from contextlib import ExitStack
 from datetime import timedelta
+import heapq
 import logging
 import os
 import subprocess
@@ -209,6 +210,7 @@ class TaskManager(Manager):
                 return False
 
         with self.db.advisory(AdvisoryKey.TASK_DEPENDENCY_ACCESS,
+                              task_id % (1<<31),
                               shared=True):
             if not partial and state == 'ts_done':
                 @self.db.tx
@@ -382,7 +384,8 @@ class TaskManager(Manager):
                     ''', (task_id, self._ts.rlookup('ts_new'),
                           self._tr.rlookup('tr_task_add_new')))
 
-            tx.advisory_lock(AdvisoryKey.TASK_DEPENDENCY_ACCESS, xact=True)
+            dependency_ids = []
+            dependency_ids_mod = []
 
             for is_soft, names in [(False, dependency_names),
                                    (True, soft_dependency_names)]:
@@ -400,22 +403,28 @@ class TaskManager(Manager):
                         return
 
                     dependency_id, = dependency[0]
+                    dependency_ids.append((is_soft, dependency_id))
+                    dependency_ids_mod.append(dependency_id % (1<<31))
 
-                    try:
-                        tx.execute('''
-                                INSERT INTO task_dependency (task_id,
-                                                             dependency_id,
-                                                             soft)
-                                VALUES (%s, %s, %s)
-                                ''', (task_id, dependency_id, is_soft))
-                    except CheckViolation as e:
-                        if e.constraint_name == 'self_dependency':
-                            logger.error('Task cannot depend on itself.')
-                            tx.rollback()
+            tx.advisory_lock(AdvisoryKey.TASK_DEPENDENCY_ACCESS,
+                             sorted(dependency_ids_mod, reverse=True),
+                             xact=True)
 
-                            return
-                        else:
-                            raise
+            for is_soft, dependency_id in dependency_ids:
+                try:
+                    tx.execute('''
+                            INSERT INTO task_dependency (task_id,
+                                                         dependency_id, soft)
+                            VALUES (%s, %s, %s)
+                            ''', (task_id, dependency_id, is_soft))
+                except CheckViolation as e:
+                    if e.constraint_name == 'self_dependency':
+                        logger.error('Task cannot depend on itself.')
+                        tx.rollback()
+
+                        return
+                    else:
+                        raise
 
             tx.execute('''
                     INSERT INTO task_history (task_id, state_id, reason_id)
@@ -1071,8 +1080,9 @@ class TaskManager(Manager):
         target_data = task_id, task_name, state_id, synthesized
 
         task_names = {task_id: task_name}
+        locked_dependency_keys = []
 
-        with self.db.advisory(AdvisoryKey.TASK_DEPENDENCY_ACCESS, shared=True):
+        try:
             # Recursively collect and claim all tasks which have the named task
             # as a dependency.
             try:
@@ -1080,12 +1090,22 @@ class TaskManager(Manager):
                 def task_graph(tx):
                     result = DAG(target_data)
                     task_nodes = {target_data[0]: result}
-                    task_queue = [result]
-                    idx = 0
 
-                    while idx < len(task_queue):
-                        cur_node = task_queue[idx]
+                    # We would like a max-heap, but heapq provides a min-heap.
+                    # Due to the modulo, we know the maximum priority we could
+                    # have, so we flip the values. Also due to the modulo,
+                    # we're not guaranteed that we will obtain all the locks in
+                    # the desired order.
+                    task_queue = [((1<<31) - target_data[0] % (1<<31), result)]
+
+                    while task_queue:
+                        _, cur_node = heapq.heappop(task_queue)
                         cur_id, *_ = cur_node.data
+
+                        dependency_key = cur_id % (1<<31)
+                        tx.advisory_lock(AdvisoryKey.TASK_DEPENDENCY_ACCESS,
+                                         dependency_key, shared=True)
+                        locked_dependency_keys.append(dependency_key)
 
                         new_tasks = tx.execute('''
                                 SELECT t.id, t.name, t.state_id, t.synthesized
@@ -1108,9 +1128,8 @@ class TaskManager(Manager):
                                 task_nodes[task_id] = new_node
 
                             cur_node.add(new_node)
-                            task_queue.append(new_node)
-
-                        idx += 1
+                            new_id = (1<<31) - task_id % (1<<31)
+                            heapq.heappush(task_queue, (new_id, new_node))
 
                     return result
             except TaskClaimError as e:
@@ -1175,6 +1194,11 @@ class TaskManager(Manager):
                                 ''', (task_id,
                                       self._ts.rlookup('ts_waiting'),
                                       self._tr.rlookup('tr_task_rerun')))
+        finally:
+            @self.db.tx
+            def F(tx):
+                tx.advisory_unlock(AdvisoryKey.TASK_DEPENDENCY_ACCESS,
+                                   locked_dependency_keys, shared=True)
 
     def reset_claimed(self, args):
         names = args.name

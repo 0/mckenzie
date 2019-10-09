@@ -33,7 +33,9 @@ class AdvisoryKey(IntEnum):
     """
 
     # Accessing the task_dependency table. Shared lock for reading, exclusive
-    # lock for writing.
+    # lock for writing. Second key must be the ID of the dependency (not the
+    # dependent task), modulo 2^31. Should be acquired in decreasing order to
+    # reduce the number of deadlocks.
     TASK_DEPENDENCY_ACCESS = 1001
 
 
@@ -78,7 +80,7 @@ class Transaction:
         else:
             self.curs.connection.rollback()
 
-    def _advisory_do(self, action, key, *, xact=False, shared=False):
+    def _advisory_do(self, action, key, key2=None, *, xact=False, shared=False):
         name_pieces = ['pg', 'advisory']
 
         if xact:
@@ -94,7 +96,15 @@ class Transaction:
         if isinstance(key, Enum):
             key = key.value
 
-        self.callproc(name_template.format(action), (key,))
+        if key2 is None:
+            keyss = [(key,)]
+        elif isinstance(key2, list):
+            keyss = [(key, k) for k in key2]
+        else:
+            keyss = [(key, key2)]
+
+        for keys in keyss:
+            self.callproc(name_template.format(action), keys)
 
     def advisory_lock(self, *args, **kwargs):
         self._advisory_do('lock', *args, **kwargs)
