@@ -142,8 +142,6 @@ class McKenzie:
 
         # task rerun
         p_task_rerun = p_task_sub.add_parser('rerun', help='rerun a task and all its dependents')
-        p_task_rerun.add_argument('--allow-no-cleanup', action='store_true', help='proceed even if "task.cleanup_cmd" is not set')
-        p_task_rerun.add_argument('--allow-no-unsynthesize', action='store_true', help='proceed even if "task.unsynthesize_cmd" is not set')
         p_task_rerun.add_argument('name', help='name of task')
 
         # task reset-failed

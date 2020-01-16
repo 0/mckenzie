@@ -497,11 +497,6 @@ class TaskManager(Manager):
         state_name = args.state
         names = args.name
 
-        if self.conf.task_cleanup_cmd is None:
-            logger.warning('No cleanup command defined.')
-
-            return
-
         req_state_id = self._parse_state(state_name)
 
         task_names = {name: True for name in names}
@@ -564,11 +559,6 @@ class TaskManager(Manager):
                     return
 
     def clean_marked(self, args):
-        if self.conf.task_cleanup_cmd is None:
-            logger.warning('No cleanup command defined.')
-
-            return
-
         task_names = []
 
         while not self.mck.interrupted.is_set():
@@ -960,21 +950,7 @@ class TaskManager(Manager):
                 logger.info(task_name)
 
     def rerun(self, args):
-        allow_no_cleanup = args.allow_no_cleanup
-        allow_no_unsynthesize = args.allow_no_unsynthesize
         task_name = args.name
-
-        if self.conf.task_cleanup_cmd is None:
-            if not allow_no_cleanup:
-                logger.error('No cleanup command defined.')
-
-                return
-
-        if self.conf.task_unsynthesize_cmd is None:
-            if not allow_no_unsynthesize:
-                logger.error('No unsynthesis command defined.')
-
-                return
 
         @self.db.tx
         def task(tx):
@@ -1364,11 +1340,6 @@ class TaskManager(Manager):
             print('Not claimed.')
 
     def synthesize(self, args):
-        if self.conf.task_synthesize_cmd is None:
-            logger.warning('No synthesis command defined.')
-
-            return
-
         while not self.mck.interrupted.is_set():
             logger.debug('Selecting next task.')
 
@@ -1496,11 +1467,6 @@ class TaskManager(Manager):
 
     def unsynthesize(self, args):
         names = args.name
-
-        if self.conf.task_unsynthesize_cmd is None:
-            logger.warning('No unsynthesis command defined.')
-
-            return
 
         for task_name in names:
             if self.mck.interrupted.is_set():
