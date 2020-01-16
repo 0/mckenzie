@@ -160,10 +160,6 @@ class McKenzie:
         p_task_uncancel.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
         p_task_uncancel.add_argument('name', nargs='*', help='task name')
 
-        # task unsynthesize
-        p_task_unsynthesize = p_task_sub.add_parser('unsynthesize', help='unsynthesize tasks')
-        p_task_unsynthesize.add_argument('name', nargs='*', help='task name')
-
         # worker
         p_worker = p_sub.add_parser('worker', help='worker management')
         p_worker_sub = p_worker.add_subparsers(dest='subcommand')
