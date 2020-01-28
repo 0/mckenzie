@@ -5,6 +5,7 @@ import os
 
 import pkg_resources
 import psycopg2
+from psycopg2 import errorcodes
 
 from .base import Manager
 from .util import HandledException
@@ -46,7 +47,7 @@ class Transaction:
         try:
             f(*args, **kwargs)
         except psycopg2.IntegrityError as e:
-            if e.pgcode == '23514':
+            if e.pgcode == errorcodes.CHECK_VIOLATION:
                 raise CheckViolation(e.diag.constraint_name)
             else:
                 raise
