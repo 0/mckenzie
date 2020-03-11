@@ -167,15 +167,8 @@ class TaskManager(Manager):
 
         return check_proc(proc, log=logger.error)
 
-    def _clean(self, task_name, *, partial=False):
-        args = []
-
-        if partial:
-            args.append('--partial')
-
-        args.append(task_name)
-
-        return self._run_cmd(self.conf.task_cleanup_cmd, *args)
+    def _clean(self, task_name):
+        return self._run_cmd(self.conf.task_cleanup_cmd, task_name)
 
     def _synthesize(self, task_name, elapsed_time_hours, max_mem_gb):
         return self._run_cmd(self.conf.task_synthesize_cmd, task_name,
@@ -184,9 +177,8 @@ class TaskManager(Manager):
     def _unsynthesize(self, task_name):
         return self._run_cmd(self.conf.task_unsynthesize_cmd, task_name)
 
-    def _task_clean(self, cs, task_name, task, *, partial=False,
-                    req_state_id=None, requested=False,
-                    allow_unsynthesized=False,
+    def _task_clean(self, cs, task_name, task, *, req_state_id=None,
+                    requested=False, allow_unsynthesized=False,
                     ignore_pending_dependents=False):
         task_id, state_id, synthesized, claim_success = task
 
@@ -212,7 +204,7 @@ class TaskManager(Manager):
         with self.db.advisory(AdvisoryKey.TASK_DEPENDENCY_ACCESS,
                               task_id % (1<<31),
                               shared=True):
-            if not partial and state == 'ts_done':
+            if state == 'ts_done':
                 @self.db.tx
                 def task_direct_dependents(tx):
                     return tx.execute('''
@@ -257,7 +249,7 @@ class TaskManager(Manager):
             logger.info(task_name)
 
             if state != 'ts_cleaned':
-                if not self._clean(task_name, partial=partial):
+                if not self._clean(task_name):
                     return None
 
             @self.db.tx
@@ -269,25 +261,14 @@ class TaskManager(Manager):
                         ''', (task_id,))
 
             if state == 'ts_done':
-                if partial:
-                    @self.db.tx
-                    def F(tx):
-                        tx.execute('''
-                                UPDATE task
-                                SET partial_cleaned = TRUE
-                                WHERE id = %s
-                                ''', (task_id,))
-                else:
-                    @self.db.tx
-                    def F(tx):
-                        tx.execute('''
-                                INSERT INTO task_history (task_id,
-                                                          state_id,
-                                                          reason_id)
-                                VALUES (%s, %s, %s)
-                                ''', (task_id,
-                                      self._ts.rlookup('ts_cleaned'),
-                                      self._tr.rlookup('tr_task_clean')))
+                @self.db.tx
+                def F(tx):
+                    tx.execute('''
+                            INSERT INTO task_history (task_id, state_id,
+                                                      reason_id)
+                            VALUES (%s, %s, %s)
+                            ''', (task_id, self._ts.rlookup('ts_cleaned'),
+                                  self._tr.rlookup('tr_task_clean')))
 
         return True
 
@@ -512,7 +493,6 @@ class TaskManager(Manager):
     def clean(self, args):
         allow_unsynthesized = args.allow_unsynthesized
         ignore_pending_dependents = args.ignore_pending_dependents
-        partial = args.partial
         name_pattern = args.name_pattern
         state_name = args.state
         names = args.name
@@ -575,7 +555,6 @@ class TaskManager(Manager):
                 cs.add(task_id)
 
                 result = self._task_clean(cs, task_name, task[0],
-                                          partial=partial,
                                           req_state_id=req_state_id,
                                           requested=requested,
                                           allow_unsynthesized=allow_unsynthesized,
@@ -583,64 +562,6 @@ class TaskManager(Manager):
 
                 if result is None:
                     return
-
-    def clean_all_partial(self, args):
-        if self.conf.task_cleanup_cmd is None:
-            logger.warning('No cleanup command defined.')
-
-            return
-
-        while not self.mck.interrupted.is_set():
-            logger.debug('Selecting next task.')
-
-            @self.db.tx
-            def task(tx):
-                return tx.execute('''
-                        WITH uncleaned_task AS (
-                            SELECT id, name
-                            FROM task
-                            WHERE state_id = %s
-                            AND synthesized
-                            AND NOT partial_cleaned
-                            AND claimed_by IS NULL
-                            LIMIT 1
-                            FOR UPDATE SKIP LOCKED
-                        )
-                        SELECT id, name, task_claim(id, %s)
-                        FROM uncleaned_task
-                        ''', (self._ts.rlookup('ts_done'), self.ident))
-
-            if len(task) == 0:
-                logger.debug('No tasks found.')
-
-                break
-
-            task_id, task_name, claim_success = task[0]
-
-            if not claim_success:
-                logger.debug(f'Failed to claim task "{task_name}".')
-
-                continue
-
-            with ClaimStack(self) as cs:
-                cs.add(task_id)
-
-                logger.info(task_name)
-
-                logger.debug('Running cleanup command.')
-
-                if not self._clean(task_name, partial=True):
-                    return
-
-                @self.db.tx
-                def F(tx):
-                    tx.execute('''
-                            UPDATE task
-                            SET partial_cleaned = TRUE
-                            WHERE id = %s
-                            ''', (task_id,))
-
-        logger.debug('Exited cleanly.')
 
     def clean_marked(self, args):
         if self.conf.task_cleanup_cmd is None:
@@ -1459,7 +1380,6 @@ class TaskManager(Manager):
                             FROM task
                             WHERE state_id = %s
                             AND NOT synthesized
-                            AND NOT partial_cleaned
                             AND claimed_by IS NULL
                             LIMIT 1
                             FOR UPDATE SKIP LOCKED

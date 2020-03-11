@@ -123,7 +123,7 @@ class Database:
     # Current schema version. This number must match the schema_version value
     # in the metadata table, and it must be increased each time the schema is
     # modified.
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     # How many times to retry in case of deadlock.
     NUM_RETRIES = 16

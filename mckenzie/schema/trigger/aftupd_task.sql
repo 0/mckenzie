@@ -9,7 +9,6 @@ DECLARE
 	_reason_ready_id INTEGER;
 	_note_time_id INTEGER;
 	_note_mem_id INTEGER;
-	_note_partial_clean_id INTEGER;
 	_note_marked_for_clean_id INTEGER;
 	_note_unmarked_for_clean_id INTEGER;
 	_old_pending BOOLEAN;
@@ -50,10 +49,6 @@ BEGIN
 	SELECT id INTO _note_mem_id
 	FROM task_note
 	WHERE name = 'tn_change_mem';
-
-	SELECT id INTO _note_partial_clean_id
-	FROM task_note
-	WHERE name = 'tn_partial_clean';
 
 	SELECT id INTO _note_marked_for_clean_id
 	FROM task_note
@@ -155,12 +150,6 @@ BEGIN
 	IF OLD.mem_limit_mb != NEW.mem_limit_mb THEN
 		INSERT INTO task_note_history (task_id, note_id, note_args)
 		VALUES (NEW.id, _note_mem_id, ARRAY[OLD.mem_limit_mb, NEW.mem_limit_mb]);
-	END IF;
-
-	-- If the task has been partially cleaned, make a note of this.
-	IF NOT OLD.partial_cleaned AND NEW.partial_cleaned THEN
-		INSERT INTO task_note_history (task_id, note_id, note_args)
-		VALUES (NEW.id, _note_partial_clean_id, ARRAY[]::TEXT[]);
 	END IF;
 
 	-- If the task has been marked or unmarked for clean, make a note of this.

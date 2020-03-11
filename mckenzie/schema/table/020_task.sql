@@ -14,7 +14,6 @@ CREATE TABLE IF NOT EXISTS task
 	max_mem_mb INTEGER,
 	synthesized BOOLEAN NOT NULL DEFAULT FALSE,
 	num_dependencies_cleaned INTEGER NOT NULL DEFAULT 0,
-	partial_cleaned BOOLEAN NOT NULL DEFAULT FALSE,
 	marked_for_clean BOOLEAN NOT NULL DEFAULT FALSE,
 	CONSTRAINT name_spaces CHECK (name NOT LIKE '% %')
 );
