@@ -10,8 +10,7 @@ import subprocess
 import threading
 from time import sleep
 
-from .base import (DatabaseNoteView, DatabaseReasonView, DatabaseStateView,
-                   Instance, Manager)
+from .base import DatabaseReasonView, DatabaseStateView, Instance, Manager
 from .task import TaskManager, TaskReason, TaskState
 from .util import (HandledException, check_proc, check_scancel,
                    humanize_datetime, mem_rss_mb)
@@ -37,11 +36,6 @@ class WorkerState(DatabaseStateView):
 class WorkerReason(DatabaseReasonView):
     def __init__(self, *args, **kwargs):
         super().__init__('worker_reason', *args, **kwargs)
-
-
-class WorkerNote(DatabaseNoteView):
-    def __init__(self, *args, **kwargs):
-        super().__init__('worker_note', 'worker_note_history', *args, **kwargs)
 
 
 class Worker(Instance):
@@ -486,7 +480,6 @@ class WorkerManager(Manager):
 
         self._ws = WorkerState(self.db)
         self._wr = WorkerReason(self.db)
-        self._wn = WorkerNote(self.db)
 
         self._ts = TaskState(self.db)
         self._tr = TaskReason(self.db)
@@ -1063,29 +1056,6 @@ class WorkerManager(Manager):
                              worker_data)
         else:
             print('No state history.')
-
-        print()
-
-        @self.db.tx
-        def worker_note_history(tx):
-            return tx.execute('''
-                    SELECT id, note_id, time
-                    FROM worker_note_history
-                    WHERE worker_id = %s
-                    ORDER BY id
-                    ''', (slurm_job_id,))
-
-        worker_data = []
-
-        for history_id, note_id, time in worker_note_history:
-            note_desc = self._wn.format(history_id, note_id)
-
-            worker_data.append([time, note_desc])
-
-        if worker_data:
-            self.print_table(['Time', 'Note'], worker_data)
-        else:
-            print('No notes.')
 
         print()
 
