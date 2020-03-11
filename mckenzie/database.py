@@ -18,6 +18,13 @@ class DatabaseError(Exception):
     pass
 
 
+class RaisedException(DatabaseError):
+    def __init__(self, message):
+        super().__init__()
+
+        self.message = message
+
+
 class CheckViolation(DatabaseError):
     def __init__(self, constraint_name):
         super().__init__()
@@ -46,6 +53,11 @@ class Transaction:
 
         try:
             f(*args, **kwargs)
+        except psycopg2.InternalError as e:
+            if e.pgcode == errorcodes.RAISE_EXCEPTION:
+                raise RaisedException(e.diag.message_primary)
+            else:
+                raise
         except psycopg2.IntegrityError as e:
             if e.pgcode == errorcodes.CHECK_VIOLATION:
                 raise CheckViolation(e.diag.constraint_name)
@@ -124,7 +136,7 @@ class Database:
     # Current schema version. This number must match the schema_version value
     # in the metadata table, and it must be increased each time the schema is
     # modified.
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 4
 
     # How many times to retry in case of deadlock.
     NUM_RETRIES = 16

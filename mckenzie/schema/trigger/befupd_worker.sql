@@ -1,23 +1,24 @@
 CREATE OR REPLACE FUNCTION befupd_worker()
 RETURNS trigger AS $$
 DECLARE
-	_running_id INTEGER;
-	_failed_id INTEGER;
+	_state_transition INTEGER;
+	_job_running BOOLEAN;
 BEGIN
-	SELECT id INTO _running_id
-	FROM worker_state
-	WHERE name = 'ws_running';
+	SELECT id INTO _state_transition
+	FROM worker_state_transition
+	WHERE from_state_id = OLD.state_id
+	AND to_state_id = NEW.state_id;
 
-	SELECT id INTO _failed_id
+	SELECT job_running INTO STRICT _job_running
 	FROM worker_state
-	WHERE name = 'ws_failed';
+	WHERE id = NEW.state_id;
 
-	IF NEW.state_id != _running_id AND NEW.num_tasks_active > 0 THEN
-		RAISE EXCEPTION 'Only running worker can have active tasks.';
+	IF OLD.state_id != NEW.state_id AND _state_transition IS NULL THEN
+		RAISE EXCEPTION 'Invalid state transition.';
 	END IF;
 
-	IF NEW.state_id != _failed_id AND NEW.failure_acknowledged THEN
-		RAISE EXCEPTION 'Only failed worker can have acknowledged failure.';
+	IF NOT _job_running AND NEW.num_tasks_active > 0 THEN
+		RAISE EXCEPTION 'Only running worker can have active tasks.';
 	END IF;
 
 	RETURN NEW;

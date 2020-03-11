@@ -87,7 +87,6 @@ class McKenzie:
 
         # task add
         p_task_add = p_task_sub.add_parser('add', help='create a new task')
-        p_task_add.add_argument('--held', action='store_true', help='create task in "held" state')
         p_task_add.add_argument('--time', metavar='T', type=float, required=True, help='time limit in hours')
         p_task_add.add_argument('--mem', metavar='M', type=float, required=True, help='memory limit in GB')
         p_task_add.add_argument('--priority', metavar='P', type=int, default=0, help='task priority (default: 0)')
@@ -97,34 +96,22 @@ class McKenzie:
 
         # task cancel
         p_task_cancel = p_task_sub.add_parser('cancel', help='change task state to "cancelled"')
-        p_task_cancel.add_argument('--skip-clean', action='store_true', help='skip the cleanup step')
         p_task_cancel.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
         p_task_cancel.add_argument('name', nargs='*', help='task name')
 
         # task clean
-        p_task_clean = p_task_sub.add_parser('clean', help='run cleanup command')
-        p_task_clean.add_argument('--allow-unsynthesized', action='store_true', help='clean tasks that are done but not synthesized')
+        p_task_clean = p_task_sub.add_parser('clean', help='run cleanup command for "cleanable" tasks')
         p_task_clean.add_argument('--ignore-pending-dependents', action='store_true', help='clean tasks that have pending direct dependents')
-        p_task_clean.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
-        p_task_clean.add_argument('--state', metavar='S', help='only tasks in state S')
-        p_task_clean.add_argument('name', nargs='*', help='task name')
 
-        # task clean-marked
-        p_task_clean_marked = p_task_sub.add_parser('clean-marked', help='run cleanup command for marked tasks')
+        # task cleanablize
+        p_task_cleanablize = p_task_sub.add_parser('cleanablize', help='change task state from "synthesized" to "cleanable"')
+        p_task_cleanablize.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
+        p_task_cleanablize.add_argument('name', nargs='*', help='task name')
 
         # task hold
         p_task_hold = p_task_sub.add_parser('hold', help='change task state to "held"')
-        p_task_hold.add_argument('--all', action='store_true', help='try to hold all possible tasks in addition to named tasks')
+        p_task_hold.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
         p_task_hold.add_argument('name', nargs='*', help='task name')
-
-        # task release
-        p_task_release = p_task_sub.add_parser('release', help='change "held" task state to "waiting"')
-        p_task_release.add_argument('--all', action='store_true', help='try to release all held tasks in addition to named tasks')
-        p_task_release.add_argument('name', nargs='*', help='task name')
-
-        # task reset-claimed
-        p_task_reset_claimed = p_task_sub.add_parser('reset-claimed', help='unclaim abandoned tasks')
-        p_task_reset_claimed.add_argument('name', nargs='*', help='task name')
 
         # task list
         p_task_list = p_task_sub.add_parser('list', help='list tasks')
@@ -134,19 +121,21 @@ class McKenzie:
         # task list-claimed
         p_task_list_claimed = p_task_sub.add_parser('list-claimed', help='list claimed tasks')
 
-        # task mark-for-clean
-        p_task_mark_for_clean = p_task_sub.add_parser('mark-for-clean', help='mark tasks as requiring cleaning')
-        p_task_mark_for_clean.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
-        p_task_mark_for_clean.add_argument('--state', metavar='S', help='only tasks in state S')
-        p_task_mark_for_clean.add_argument('name', nargs='*', help='task name')
+        # task release
+        p_task_release = p_task_sub.add_parser('release', help='change "held" task state to "waiting"')
+        p_task_release.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
+        p_task_release.add_argument('name', nargs='*', help='task name')
 
         # task rerun
         p_task_rerun = p_task_sub.add_parser('rerun', help='rerun a task and all its dependents')
         p_task_rerun.add_argument('name', help='name of task')
 
+        # task reset-claimed
+        p_task_reset_claimed = p_task_sub.add_parser('reset-claimed', help='unclaim abandoned tasks')
+        p_task_reset_claimed.add_argument('name', nargs='*', help='task name')
+
         # task reset-failed
         p_task_reset_failed = p_task_sub.add_parser('reset-failed', help='reset all failed tasks to "waiting"')
-        p_task_reset_failed.add_argument('--skip-clean', action='store_true', help='skip the cleanup step')
 
         # task show
         p_task_show = p_task_sub.add_parser('show', help='show task details')
@@ -159,6 +148,11 @@ class McKenzie:
         p_task_uncancel = p_task_sub.add_parser('uncancel', help='change "cancelled" task state to "waiting"')
         p_task_uncancel.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
         p_task_uncancel.add_argument('name', nargs='*', help='task name')
+
+        # task uncleanablize
+        p_task_uncleanablize = p_task_sub.add_parser('uncleanablize', help='change task state from "cleanable" to "synthesized"')
+        p_task_uncleanablize.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
+        p_task_uncleanablize.add_argument('name', nargs='*', help='task name')
 
         # worker
         p_worker = p_sub.add_parser('worker', help='worker management')

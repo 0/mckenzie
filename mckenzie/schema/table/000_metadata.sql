@@ -6,4 +6,4 @@ CREATE TABLE metadata
 );
 
 INSERT INTO metadata (key, value)
-VALUES ('schema_version', '3');
+VALUES ('schema_version', '4');

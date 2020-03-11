@@ -1,14 +1,15 @@
 CREATE OR REPLACE FUNCTION befupd_task()
 RETURNS trigger AS $$
 DECLARE
-	_new_pending BOOLEAN;
+	_state_transition INTEGER;
 BEGIN
-	SELECT pending INTO _new_pending
-	FROM task_state
-	WHERE id = NEW.state_id;
+	SELECT id INTO _state_transition
+	FROM task_state_transition
+	WHERE from_state_id = OLD.state_id
+	AND to_state_id = NEW.state_id;
 
-	IF _new_pending AND NEW.synthesized THEN
-		RAISE EXCEPTION 'Pending task may not be synthesized.';
+	IF OLD.state_id != NEW.state_id AND _state_transition IS NULL THEN
+		RAISE EXCEPTION 'Invalid state transition.';
 	END IF;
 
 	RETURN NEW;

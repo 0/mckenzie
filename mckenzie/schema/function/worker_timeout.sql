@@ -4,13 +4,13 @@ CREATE OR REPLACE FUNCTION worker_timeout(
 )
 RETURNS BOOLEAN AS $$
 DECLARE
-	_running_id INTEGER;
+	_job_running BOOLEAN;
 BEGIN
-	SELECT id INTO _running_id
+	SELECT job_running INTO _job_running
 	FROM worker_state
-	WHERE name = 'ws_running';
+	WHERE id = _worker.state_id;
 
-	IF _worker.state_id != _running_id THEN
+	IF NOT _job_running THEN
 		RETURN NULL;
 	END IF;
 

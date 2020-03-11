@@ -9,13 +9,11 @@ CREATE TABLE IF NOT EXISTS task
 	claimed_by INTEGER,
 	claimed_since TIMESTAMP WITH TIME ZONE,
 	num_dependencies INTEGER NOT NULL DEFAULT 0,
-	num_dependencies_pending INTEGER NOT NULL DEFAULT 0,
+	num_dependencies_incomplete INTEGER NOT NULL DEFAULT 0,
 	elapsed_time INTERVAL,
 	max_mem_mb INTEGER,
-	synthesized BOOLEAN NOT NULL DEFAULT FALSE,
-	num_dependencies_cleaned INTEGER NOT NULL DEFAULT 0,
-	marked_for_clean BOOLEAN NOT NULL DEFAULT FALSE,
-	CONSTRAINT name_spaces CHECK (name NOT LIKE '% %')
+	CONSTRAINT name_spaces CHECK (name NOT LIKE '% %'),
+	CONSTRAINT dependencies_bound CHECK (num_dependencies_incomplete <= num_dependencies)
 );
 
 
