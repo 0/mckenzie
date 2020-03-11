@@ -132,6 +132,8 @@ class BatchManager(Manager):
 
                 try:
                     self.mck.call_manager(batch_args)
+                except HandledException:
+                    pass
                 except Exception:
                     traceback.print_exc()
         finally:
