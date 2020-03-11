@@ -1126,8 +1126,8 @@ class WorkerManager(Manager):
 
     def spawn(self, args):
         worker_cpus = args.cpus
-        worker_time_hours = args.time
-        worker_mem_gb = args.mem
+        worker_time_hours = args.time_hr
+        worker_mem_gb = args.mem_gb
         sbatch_args = args.sbatch_args
         num = args.num
 

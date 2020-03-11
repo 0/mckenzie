@@ -47,8 +47,8 @@ class Colorizer:
         'warning': ['fg_yellow'],
     }
 
-    def __init__(self):
-        self.use_colors = False
+    def __init__(self, use_colors):
+        self.use_colors = use_colors
 
     def _expand_name(self, name):
         if name not in self.THEMES:

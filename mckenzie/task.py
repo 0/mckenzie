@@ -406,8 +406,8 @@ class TaskManager(Manager):
                          total=('Total', (1, 2)))
 
     def add(self, args):
-        time_limit = timedelta(hours=args.time)
-        mem_limit_mb = args.mem * 1024
+        time_limit = timedelta(hours=args.time_hr)
+        mem_limit_mb = args.mem_gb * 1024
         priority = args.priority
         depends_on = args.depends_on
         soft_depends_on = args.soft_depends_on

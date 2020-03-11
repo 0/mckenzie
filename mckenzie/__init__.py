@@ -47,16 +47,39 @@ class McKenzie:
     })
 
     @staticmethod
-    def _cmdline_parser(*, name='mck', global_args=True, add_help=True):
+    def _parser_commands(p):
+        parsers = [((), p)]
+        commands = foreverdict()
+
+        while parsers:
+            pieces, parser = parsers.pop(0)
+
+            for action in parser._actions:
+                if not isinstance(action, argparse._SubParsersAction):
+                    continue
+
+                for name, subparser in action.choices.items():
+                    pieces_new = pieces + (name,)
+                    parsers.append((pieces_new, subparser))
+
+                    d = commands
+
+                    for piece in pieces_new:
+                        d = d[piece]
+
+        return commands
+
+    @classmethod
+    def _cmdline_parser(cls, *, name='mck', global_args=True, add_help=True):
         p = argparse.ArgumentParser(prog=name, add_help=add_help)
         p_sub = p.add_subparsers(dest='command')
 
         if global_args:
-            p.add_argument('--conf', help='path to configuration file')
+            p.add_argument('--conf', help=f'path to configuration file (overrides {cls.ENV_CONF} environment variable)')
             p.add_argument('--unsafe', action='store_true', help='skip safety checks')
-            p.add_argument('-q', '--quiet', action='count', help='decrease verbosity')
-            p.add_argument('-v', '--verbose', action='count', help='increase verbosity')
-            p.add_argument('--color', action='store_true', help='use color in output')
+            p.add_argument('-q', '--quiet', action='count', help='decrease log verbosity (may be used multiple times)')
+            p.add_argument('-v', '--verbose', action='count', help='increase log verbosity (may be used multiple times)')
+            p.add_argument('--color', action='store_true', help=f'use color in output (overrides {cls.ENV_COLOR} environment variable)')
 
         # batch
         p_batch = p_sub.add_parser('batch', help='batch command execution')
@@ -87,12 +110,12 @@ class McKenzie:
 
         # task add
         p_task_add = p_task_sub.add_parser('add', help='create a new task')
-        p_task_add.add_argument('--time', metavar='T', type=float, required=True, help='time limit in hours')
-        p_task_add.add_argument('--mem', metavar='M', type=float, required=True, help='memory limit in GB')
-        p_task_add.add_argument('--priority', metavar='P', type=int, default=0, help='task priority (default: 0)')
-        p_task_add.add_argument('--depends-on', metavar='DEP', action='append', help='make DEP a dependency of the new task')
-        p_task_add.add_argument('--soft-depends-on', metavar='DEP', action='append', help='make DEP a soft dependency of the new task')
-        p_task_add.add_argument('name', help='name for the new task')
+        p_task_add.add_argument('--time-hr', metavar='T', type=float, required=True, help='time limit in hours')
+        p_task_add.add_argument('--mem-gb', metavar='M', type=float, required=True, help='memory limit in GB')
+        p_task_add.add_argument('--priority', metavar='P', type=int, default=0, help='priority (default: 0)')
+        p_task_add.add_argument('--depends-on', metavar='DEP', action='append', help='task DEP is a dependency')
+        p_task_add.add_argument('--soft-depends-on', metavar='DEP', action='append', help='task DEP is a soft dependency')
+        p_task_add.add_argument('name', help='task name')
 
         # task cancel
         p_task_cancel = p_task_sub.add_parser('cancel', help='change task state to "cancelled"')
@@ -101,7 +124,7 @@ class McKenzie:
 
         # task clean
         p_task_clean = p_task_sub.add_parser('clean', help='run cleanup command for "cleanable" tasks')
-        p_task_clean.add_argument('--ignore-pending-dependents', action='store_true', help='clean tasks that have pending direct dependents')
+        p_task_clean.add_argument('--ignore-pending-dependents', action='store_true', help='include tasks that have pending direct dependents')
 
         # task cleanablize
         p_task_cleanablize = p_task_sub.add_parser('cleanablize', help='change task state from "synthesized" to "cleanable"')
@@ -128,14 +151,14 @@ class McKenzie:
 
         # task rerun
         p_task_rerun = p_task_sub.add_parser('rerun', help='rerun a task and all its dependents')
-        p_task_rerun.add_argument('name', help='name of task')
+        p_task_rerun.add_argument('name', help='task name')
 
         # task reset-claimed
         p_task_reset_claimed = p_task_sub.add_parser('reset-claimed', help='unclaim abandoned tasks')
         p_task_reset_claimed.add_argument('name', nargs='*', help='task name')
 
         # task reset-failed
-        p_task_reset_failed = p_task_sub.add_parser('reset-failed', help='reset all failed tasks to "waiting"')
+        p_task_reset_failed = p_task_sub.add_parser('reset-failed', help='reset all "failed" tasks to "waiting"')
 
         # task show
         p_task_show = p_task_sub.add_parser('show', help='show task details')
@@ -176,7 +199,7 @@ class McKenzie:
         p_worker_quit = p_worker_sub.add_parser('quit', help='signal worker job to quit')
         p_worker_quit.add_argument('--abort', action='store_true', help='quit immediately, killing running tasks')
         p_worker_quit.add_argument('--all', action='store_true', help='signal all worker jobs')
-        p_worker_quit.add_argument('--state', metavar='S', help='only workers in state S when using --all')
+        p_worker_quit.add_argument('--state', metavar='S', help='only workers in state S for "--all"')
         p_worker_quit.add_argument('slurm_job_id', nargs='*', type=int, help='Slurm job ID of worker')
 
         # worker run
@@ -188,36 +211,13 @@ class McKenzie:
 
         # worker spawn
         p_worker_spawn = p_worker_sub.add_parser('spawn', help='spawn Slurm worker job')
-        p_worker_spawn.add_argument('--cpus', metavar='C', type=int, required=True, help='number of cpus')
-        p_worker_spawn.add_argument('--time', metavar='T', type=float, required=True, help='time limit in hours')
-        p_worker_spawn.add_argument('--mem', metavar='M', type=float, required=True, help='amount of memory in GB')
+        p_worker_spawn.add_argument('--cpus', metavar='C', type=int, required=True, help='number of CPUs')
+        p_worker_spawn.add_argument('--time-hr', metavar='T', type=float, required=True, help='time limit in hours')
+        p_worker_spawn.add_argument('--mem-gb', metavar='M', type=float, required=True, help='amount of memory in GB')
         p_worker_spawn.add_argument('--sbatch-args', metavar='SA', help='additional arguments to pass to sbatch')
         p_worker_spawn.add_argument('--num', type=int, default=1, help='number of workers to spawn (default: 1)')
 
         return p
-
-    @staticmethod
-    def _parser_commands(p):
-        parsers = [((), p)]
-        commands = foreverdict()
-
-        while parsers:
-            pieces, parser = parsers.pop(0)
-
-            for action in parser._actions:
-                if not isinstance(action, argparse._SubParsersAction):
-                    continue
-
-                for name, subparser in action.choices.items():
-                    pieces_new = pieces + (name,)
-                    parsers.append((pieces_new, subparser))
-
-                    d = commands
-
-                    for piece in pieces_new:
-                        d = d[piece]
-
-        return commands
 
     @classmethod
     def from_args(cls, argv):
@@ -253,19 +253,15 @@ class McKenzie:
 
             return
 
-        mck = McKenzie(conf_path)
-
-        if args.unsafe:
-            mck.unsafe = True
-
         if args.color:
-            mck.colorizer.use_colors = True
+            use_colors = True
         else:
             try:
-                mck.colorizer.use_colors = bool(os.environ[cls.ENV_COLOR])
+                use_colors = bool(os.environ[cls.ENV_COLOR])
             except KeyError:
-                pass
+                use_colors = False
 
+        mck = McKenzie(conf_path, unsafe=args.unsafe, use_colors=use_colors)
         mck.call_manager(args)
 
     def _interrupt(self, signum=None, frame=None):
@@ -274,15 +270,13 @@ class McKenzie:
         # If we recieve the signal again, abort in the usual fashion.
         signal.signal(signal.SIGINT, signal.SIG_DFL)
 
-    def __init__(self, conf_path):
+    def __init__(self, conf_path, *, unsafe=False, use_colors=False):
         self.conf = Conf(conf_path)
-
-        self.colorizer = Colorizer()
+        self.unsafe = True if unsafe else self.conf.general_unsafe
+        self.colorizer = Colorizer(use_colors)
 
         self.interrupted = Event()
         signal.signal(signal.SIGINT, self._interrupt)
-
-        self.unsafe = self.conf.general_unsafe
 
     def _preflight(self, *, database_init=True, database_current=True):
         if self.unsafe:
