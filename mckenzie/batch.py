@@ -105,17 +105,19 @@ class BatchManager(Manager):
 
         try:
             while True:
-                try:
-                    pre_line = input(self.PROMPT)
-                except EOFError:
-                    logger.debug('EOF received.')
+                with self.mck.without_sigint():
+                    try:
+                        pre_line = input(self.PROMPT)
+                    except EOFError:
+                        print()
+                        logger.debug('EOF received.')
 
-                    break
-                except KeyboardInterrupt:
-                    logger.debug('Keyboard interrupt received.')
-                    print()
+                        break
+                    except KeyboardInterrupt:
+                        print()
+                        logger.debug('Keyboard interrupt received.')
 
-                    continue
+                        continue
 
                 line = pre_line.rstrip()
 

@@ -1,5 +1,6 @@
 import argparse
 from collections import defaultdict
+from contextlib import contextmanager
 import logging
 import os
 import signal
@@ -267,7 +268,8 @@ class McKenzie:
     def _interrupt(self, signum=None, frame=None):
         logger.debug('Interrupted.')
         self.interrupted.set()
-        # If we recieve the signal again, abort in the usual fashion.
+        # If we recieve the signal again, abort. Note that this will not raise
+        # KeyboardInterrupt, but will simply kill the process.
         signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     def __init__(self, conf_path, *, unsafe=False, use_colors=False):
@@ -321,3 +323,15 @@ class McKenzie:
 
         mgr = self.MANAGERS[mgr_name](self)
         getattr(mgr, subcmd)(args)
+
+    @contextmanager
+    def without_sigint(self):
+        # Store the real handler and temporarily install the one that raises
+        # KeyboardInterrupt.
+        real_handler = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+
+        yield
+
+        # Put back the real handler.
+        signal.signal(signal.SIGINT, real_handler)
