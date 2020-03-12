@@ -122,15 +122,6 @@ class Transaction:
     def advisory_unlock(self, *args, **kwargs):
         self._advisory_do('unlock', *args, **kwargs)
 
-    @contextmanager
-    def advisory(self, *args, **kwargs):
-        self.advisory_lock(*args, **kwargs)
-
-        try:
-            yield
-        finally:
-            self.advisory_unlock(*args, **kwargs)
-
 
 class Database:
     # Current schema version. This number must match the schema_version value
