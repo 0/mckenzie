@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS task_note
 
 INSERT INTO task_note (name, description_format, arg_types)
 VALUES
-	('tn_change_time', 'Changed time limit from {0} to {1}.', ARRAY['INTERVAL', 'INTERVAL']),
-	('tn_change_mem', 'Changed memory limit from {0} MB to {1} MB.', ARRAY['INTEGER', 'INTEGER'])
+	('tn_change_time', 'Changed time limit from {0} to {1}.',
+		ARRAY['INTERVAL', 'INTERVAL']),
+	('tn_change_mem', 'Changed memory limit from {0} MB to {1} MB.',
+		ARRAY['INTEGER', 'INTEGER'])
 ON CONFLICT (name) DO NOTHING;

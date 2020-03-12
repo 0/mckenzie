@@ -71,7 +71,6 @@ class BatchManager(Manager):
         else:
             def completer(text, state):
                 context = readline.get_line_buffer()[:readline.get_begidx()]
-
                 cmd_dict = commands
 
                 for word in context.split():
@@ -123,8 +122,7 @@ class BatchManager(Manager):
 
                 if not line:
                     continue
-
-                if line == 'exit':
+                elif line == 'exit':
                     break
 
                 try:

@@ -691,7 +691,7 @@ class TaskManager(Manager):
 
         task_data = []
 
-        for (name, state_id, priority, time_limit, mem_limit, num_dep,
+        for (name, state_id, priority, time_limit, mem_limit_mb, num_dep,
                 num_dep_inc) in tasks:
             state, state_user, state_color = self._format_state(state_id)
 
@@ -704,7 +704,7 @@ class TaskManager(Manager):
                 dep = ''
 
             task_data.append([name, (state_user, state_color), dep, priority,
-                              time_limit, mem_limit])
+                              time_limit, mem_limit_mb])
 
         self.print_table(['Name', 'State', 'Dep', 'Priority', 'Time',
                           'Mem (MB)'],
@@ -715,10 +715,10 @@ class TaskManager(Manager):
         def tasks(tx):
             return tx.execute('''
                     SELECT name, state_id, claimed_by, claimed_since,
-                           NOW() - claimed_since
+                           NOW() - claimed_since AS claimed_for
                     FROM task
                     WHERE claimed_by IS NOT NULL
-                    ORDER BY NOW() - claimed_since
+                    ORDER BY claimed_for
                     ''')
 
         if not tasks:

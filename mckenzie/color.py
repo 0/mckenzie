@@ -41,7 +41,7 @@ class Colorizer:
     }
 
     THEMES = {
-        'error': ['bg_red', 'fg_b_white'],
+        'error': ['fg_b_white', 'bg_red'],
         'good': ['fg_b_green'],
         'notice': ['fg_cyan'],
         'warning': ['fg_yellow'],

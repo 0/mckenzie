@@ -251,7 +251,8 @@ class Database:
             return False
 
         if db_version != self.SCHEMA_VERSION:
-            log(f'Schema version "{db_version}" does not match "{self.SCHEMA_VERSION}".')
+            log(f'Schema version "{db_version}" does not match '
+                f'"{self.SCHEMA_VERSION}".')
 
             return False
 
@@ -287,9 +288,12 @@ class DatabaseSchemaManager(Manager):
 
             if db_version is not None:
                 if db_version == False:
-                    logger.error('Schema already loaded, but version is missing.')
+                    logger.error('Schema already loaded, but version is '
+                                 'missing.')
                 elif db_version != Database.SCHEMA_VERSION:
-                    logger.error(f'Schema already loaded, but version "{db_version}" does not match "{Database.SCHEMA_VERSION}".')
+                    logger.error('Schema already loaded, but version '
+                                 f'"{db_version}" does not match '
+                                 f'"{Database.SCHEMA_VERSION}".')
                 else:
                     logger.error('Schema already loaded, and up to date.')
 
@@ -297,16 +301,14 @@ class DatabaseSchemaManager(Manager):
 
             paths = []
 
-            for path in (self._get_schema_files('trigger') +
-                         self._get_schema_files('table') +
-                         self._get_schema_files('function')):
-                logger.debug(f'Executing "{path}".')
+            for typ in ['trigger', 'table', 'function']:
+                for path in self._get_schema_files(typ):
+                    logger.debug(f'Executing "{path}".')
 
-                with open(path) as f:
-                    schema_file_data = f.read()
+                    with open(path) as f:
+                        tx.execute(f.read())
 
-                tx.execute(schema_file_data)
-                paths.append(path)
+                    paths.append(path)
 
             return paths
 

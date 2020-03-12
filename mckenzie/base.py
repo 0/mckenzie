@@ -8,12 +8,6 @@ class DatabaseView:
     def __init__(self, db):
         self.db = db
 
-    def lookup(self, state_id):
-        raise NotImplementedError()
-
-    def rlookup(self, name):
-        raise NotImplementedError()
-
 
 class DatabaseNoteView(DatabaseView):
     def __init__(self, table_name, history_table_name, *args, **kwargs):

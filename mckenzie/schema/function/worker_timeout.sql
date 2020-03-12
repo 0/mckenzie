@@ -6,7 +6,7 @@ RETURNS BOOLEAN AS $$
 DECLARE
 	_job_running BOOLEAN;
 BEGIN
-	SELECT job_running INTO _job_running
+	SELECT job_running INTO STRICT _job_running
 	FROM worker_state
 	WHERE id = _worker.state_id;
 

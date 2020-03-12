@@ -104,13 +104,13 @@ class Worker(Instance):
 
         # Futures currently executing.
         self.fut_pending = set()
-        # PIDs currently executing (mapping to task names).
+        # PIDs currently executing (mapping to task names). This is modified
+        # from inside the ThreadPoolExecutor, so self.lock must be acquired for
+        # every access.
         self.running_pids = {}
 
-        # Task IDs.
-        self.fut_ids = {}
-        # Task names.
-        self.fut_names = {}
+        # Mapping of futures to task IDs and names.
+        self.fut_task = {}
 
         # Times at which tasks start running.
         self.task_starts = {}
@@ -206,6 +206,7 @@ class Worker(Instance):
             return False, False, '', 0
 
         with self.lock:
+            # We're assuming PID reuse is not a problem.
             self.running_pids[p.pid] = task_name
 
         # Block until the process is done.
@@ -220,7 +221,9 @@ class Worker(Instance):
         return True, success, p.stdout.read(), int(wait_usage.ru_maxrss)
 
     def _run(self, pool):
+        # Memory usage for tasks that are over their limit.
         overmemory_mb = {}
+        # Only output the warning once.
         rss_fail_warn = False
 
         while not self.done:
@@ -242,10 +245,7 @@ class Worker(Instance):
                         rss_fail_warn = True
                         logger.warning('Failed to get memory usage for task '
                                        f'"{task_name}" ({pid}).')
-
-                    continue
-
-                if rss_mb > limit_mb:
+                elif rss_mb > limit_mb:
                     logger.info(f'Killing task "{task_name}" ({pid}) for '
                                 'using too much memory '
                                 f'({rss_mb} MB > {limit_mb} MB).')
@@ -277,8 +277,7 @@ class Worker(Instance):
                 fut = pool.submit(self._execute_task, task_name)
 
                 self.fut_pending.add(fut)
-                self.fut_ids[fut] = task_id
-                self.fut_names[fut] = task_name
+                self.fut_task[fut] = task_id, task_name
 
             # Update the status.
             @self.db.tx
@@ -298,31 +297,31 @@ class Worker(Instance):
                                  return_when=futures.FIRST_COMPLETED)
                 fut_done, self.fut_pending = r
 
-                # Handle completed tasks.
                 for fut in fut_done:
-                    task_id = self.fut_ids.pop(fut)
-                    task_name = self.fut_names.pop(fut)
-
+                    # Handle completed task.
+                    task_id, task_name = self.fut_task.pop(fut)
                     task_ran, success, output, max_mem_kb = fut.result()
                     max_mem_mb = max_mem_kb / 1024
 
                     if success:
                         output = output.split('\n')
 
+                        # Ignore any empty lines that may have been included
+                        # after the success string.
                         while output and output[-1] == '':
                             output.pop()
 
                         ss = self.conf.worker_success_string
 
-                        if not (output and output[-1] == ss):
+                        if output and output[-1] == ss:
+                            reason_id = self._tr.rlookup('tr_success')
+                        else:
                             success = False
                             reason_id = self._tr.rlookup('tr_failure_string')
-                        else:
-                            reason_id = self._tr.rlookup('tr_success')
-                    elif task_name in overmemory_mb:
-                        reason_id = self._tr.rlookup('tr_failure_memory')
                     elif not task_ran:
                         reason_id = self._tr.rlookup('tr_failure_run')
+                    elif task_name in overmemory_mb:
+                        reason_id = self._tr.rlookup('tr_failure_memory')
                     else:
                         reason_id = self._tr.rlookup('tr_failure_exit_code')
 
@@ -333,13 +332,16 @@ class Worker(Instance):
 
                     logger.debug(f'"{task_name}": {success}')
 
+                    # Update the task as necessary before giving it up.
                     duration = datetime.now() - self.task_starts[task_name]
 
                     @self.db.tx
                     def F(tx):
                         limit_retry = False
 
-                        # Extend task memory limit if it was underestimated.
+                        # Extend the task memory limit if it was
+                        # underestimated, even if the task finished
+                        # successfully, because it might get rerun later.
                         if task_name in overmemory_mb:
                             rss_mb = overmemory_mb.pop(task_name)
                             new_limit_mb = 1.2 * rss_mb
@@ -370,7 +372,10 @@ class Worker(Instance):
 
                         if (limit_retry
                                 and TaskManager._clean(self.conf, task_name)):
-                            # Automatically reset after extending the limit.
+                            # The task was unsuccessful and its memory limit
+                            # was underestimated. We've increased the limit,
+                            # and will retry the task automatically as long as
+                            # we can clean it.
                             tx.execute('''
                                     INSERT INTO task_history (task_id,
                                                               state_id,
@@ -382,6 +387,7 @@ class Worker(Instance):
                                           self._tr.rlookup('tr_limit_retry'),
                                           self.slurm_job_id))
 
+                        # We're completely done with the task, so let it go.
                         TaskManager._unclaim(tx, task_id, self.ident)
 
                     self.task_starts.pop(task_name)
@@ -434,13 +440,17 @@ class Worker(Instance):
                                  return_when=futures.ALL_COMPLETED)
                 fut_done, self.fut_pending = r
 
+                # If we're here and fut_done isn't empty, something went wrong.
+                # There's a chance that we're being terminated by Slurm and are
+                # currently in the KillWait window, so we'll receive a SIGKILL
+                # very soon and need to run this loop as quickly as possible.
                 for fut in fut_done:
-                    task_id = self.fut_ids.pop(fut)
-                    task_name = self.fut_names.pop(fut)
-
-                    duration = datetime.now() - self.task_starts[task_name]
+                    task_id, task_name = self.fut_task.pop(fut)
 
                     logger.debug(f'Task "{task_name}" was aborted.')
+
+                    # Update the task as necessary before giving it up.
+                    duration = datetime.now() - self.task_starts[task_name]
 
                     @self.db.tx
                     def F(tx):
@@ -463,7 +473,8 @@ class Worker(Instance):
                                       self.slurm_job_id))
 
                         if TaskManager._clean(self.conf, task_name):
-                            # Automatically reset after extending the limit.
+                            # We will retry the task automatically as long as
+                            # we can clean it.
                             tx.execute('''
                                     INSERT INTO task_history (task_id,
                                                               state_id,
@@ -475,6 +486,7 @@ class Worker(Instance):
                                           self._tr.rlookup('tr_limit_retry'),
                                           self.slurm_job_id))
 
+                        # We're completely done with the task, so let it go.
                         TaskManager._unclaim(tx, task_id, self.ident)
 
         self.clean_exit = True
@@ -539,8 +551,8 @@ class WorkerManager(Manager):
         else:
             slurm_job_id = str(slurm_job_id)
 
-        path = (self.WORKER_OUTPUT_DIR /
-                self.WORKER_OUTPUT_FILE_TEMPLATE.format(slurm_job_id))
+        path = (self.WORKER_OUTPUT_DIR
+                    / self.WORKER_OUTPUT_FILE_TEMPLATE.format(slurm_job_id))
 
         if absolute:
             path = self.conf.general_chdir / path
@@ -814,6 +826,7 @@ class WorkerManager(Manager):
                 cur_mem_usage_percent = None
                 cur_mem_usage_percent_str = '-'
 
+            # Color based on resource usage.
             if state == 'ws_quitting':
                 pass
             elif (tasks_percent is not None and tasks_percent < 50
@@ -858,10 +871,10 @@ class WorkerManager(Manager):
                 count) in workers:
             mem_limit_gb = ceil(mem_limit_mb / 1024)
 
-            if max_time_start is None:
-                max_time_start = '-'
-            else:
+            if max_time_start is not None:
                 max_time_start = humanize_datetime(max_time_start, now)
+            else:
+                max_time_start = '-'
 
             if count == 0:
                 count = '-'
@@ -1140,9 +1153,9 @@ class WorkerManager(Manager):
         worker_mem_mb = ceil(worker_mem_gb * 1024)
 
         proc_args = ['sbatch']
-        proc_args.append('--job-name=' + self.conf.worker_name)
         proc_args.append('--hold')
         proc_args.append('--parsable')
+        proc_args.append('--job-name=' + self.conf.worker_name)
         proc_args.append('--signal=B:TERM@' + str(self.END_SIGNAL_SECONDS))
         proc_args.append('--chdir=' + str(self.conf.general_chdir))
         proc_args.append('--output=' + str(self._worker_output_file()))

@@ -23,7 +23,6 @@ def format_datetime(dt):
     # Format as YYYY-MM-DD HH:MM:SS.
     return dt_local.isoformat(sep=' ', timespec='seconds')
 
-
 def format_int(n):
     pieces = []
 
@@ -35,7 +34,6 @@ def format_int(n):
 
     return ','.join(reversed(pieces))
 
-
 def format_timedelta(td):
     hms = int(td.total_seconds())
     sign = '-' if hms < 0 else ''
@@ -45,14 +43,12 @@ def format_timedelta(td):
     # Format as [-]H...HH:MM:SS.
     return f'{sign}{h}:{m:02}:{s:02}'
 
-
 FORMAT_FUNCTIONS = defaultdict(lambda: str, {
     datetime: format_datetime,
     int: format_int,
     timedelta: format_timedelta,
     type(None): lambda x: '',
 })
-
 
 def format_object(x):
     return FORMAT_FUNCTIONS[type(x)](x)
@@ -63,7 +59,6 @@ RIGHT_ALIGNS = set([
     int,
     timedelta,
 ])
-
 
 def print_table(pre_header, pre_data, *, reset_str, total=None):
     # Convert all header entries to tuples.
