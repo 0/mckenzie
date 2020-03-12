@@ -286,7 +286,7 @@ class DatabaseSchemaManager(Manager):
                                  f'"{db_version}" does not match '
                                  f'"{Database.SCHEMA_VERSION}".')
                 else:
-                    logger.error('Schema already loaded, and up to date.')
+                    logger.info('Schema already loaded, and up to date.')
 
                 raise HandledException()
 
