@@ -1,2 +1,0 @@
-ALTER TABLE task
-DROP CONSTRAINT IF EXISTS num_dependencies;

@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS task_dependency
 	id SERIAL PRIMARY KEY,
 	task_id INTEGER NOT NULL REFERENCES task,
 	dependency_id INTEGER NOT NULL REFERENCES task,
+	soft BOOLEAN NOT NULL DEFAULT FALSE,
 	UNIQUE (task_id, dependency_id),
 	CONSTRAINT self_dependency CHECK (task_id != dependency_id)
 );

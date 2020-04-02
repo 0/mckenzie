@@ -4,7 +4,8 @@ CREATE TABLE IF NOT EXISTS task_history
 	task_id INTEGER NOT NULL REFERENCES task,
 	state_id INTEGER NOT NULL REFERENCES task_state,
 	time TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-	reason_id INTEGER NOT NULL REFERENCES task_reason
+	reason_id INTEGER NOT NULL REFERENCES task_reason,
+	worker_id INTEGER REFERENCES worker
 );
 
 

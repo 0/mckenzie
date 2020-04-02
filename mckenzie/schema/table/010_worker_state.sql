@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS worker_state
 	job_exists BOOLEAN NOT NULL DEFAULT FALSE
 );
 
+
 INSERT INTO worker_state (name, job_exists)
 VALUES
 	('ws_queued', TRUE),

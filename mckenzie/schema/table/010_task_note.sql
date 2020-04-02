@@ -6,8 +6,12 @@ CREATE TABLE IF NOT EXISTS task_note
 	arg_types TEXT[] NOT NULL
 );
 
+
 INSERT INTO task_note (name, description_format, arg_types)
 VALUES
 	('tn_change_time', 'Changed time limit from {0} to {1}.', ARRAY['INTERVAL', 'INTERVAL']),
-	('tn_change_mem', 'Changed memory limit from {0} MB to {1} MB.', ARRAY['INTEGER', 'INTEGER'])
+	('tn_change_mem', 'Changed memory limit from {0} MB to {1} MB.', ARRAY['INTEGER', 'INTEGER']),
+	('tn_partial_clean', 'Partially cleaned.', ARRAY[]::TEXT[]),
+	('tn_marked_for_clean', 'Marked for clean.', ARRAY[]::TEXT[]),
+	('tn_unmarked_for_clean', 'Unmarked for clean.', ARRAY[]::TEXT[])
 ON CONFLICT (name) DO NOTHING;

@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS worker_note
 	arg_types TEXT[] NOT NULL
 );
 
+
 INSERT INTO worker_note (name, description_format, arg_types)
 VALUES ('wn_quitting', 'Quitting.', ARRAY[]::TEXT[])
 ON CONFLICT (name) DO NOTHING;

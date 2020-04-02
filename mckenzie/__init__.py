@@ -8,7 +8,7 @@ from threading import Event
 from .batch import BatchManager
 from .color import Colorizer
 from .conf import Conf
-from .database import DatabaseManager, DatabaseMigrationManager
+from .database import DatabaseManager, DatabaseSchemaManager
 from .task import TaskManager
 from .util import foreverdict
 from .worker import WorkerManager
@@ -27,7 +27,7 @@ class McKenzie:
     MANAGERS = {
         'batch': BatchManager,
         'database': DatabaseManager,
-        'database.migration': DatabaseMigrationManager,
+        'database.schema': DatabaseSchemaManager,
         'task': TaskManager,
         'worker': WorkerManager,
     }
@@ -35,14 +35,14 @@ class McKenzie:
     PREFLIGHT_ARGS = defaultdict(dict, {
         'batch': {
             'database_init': False,
-            'database_update': False,
+            'database_current': False,
         },
         'database': {
             'database_init': False,
-            'database_update': False,
+            'database_current': False,
         },
-        'database.migration': {
-            'database_update': False,
+        'database.schema': {
+            'database_current': False,
         },
     })
 
@@ -74,28 +74,12 @@ class McKenzie:
         p_database = p_sub.add_parser('database', help='database management')
         p_database_sub = p_database.add_subparsers(dest='subcommand')
 
-        # database migration
-        p_database_migration = p_database_sub.add_parser('migration', help='migration management')
-        p_database_migration_sub = p_database_migration.add_subparsers(dest='subsubcommand')
+        # database schema
+        p_database_schema = p_database_sub.add_parser('schema', help='schema management')
+        p_database_schema_sub = p_database_schema.add_subparsers(dest='subsubcommand')
 
-        # database migration check
-        p_database_migration_check = p_database_migration_sub.add_parser('check', help='check migrations')
-
-        # database migration list
-        p_database_migration_list = p_database_migration_sub.add_parser('list', help='list migrations')
-
-        # database migration update
-        p_database_migration_update = p_database_migration_sub.add_parser('update', help='apply all pending migrations')
-        p_database_migration_update.add_argument('--insane', action='store_true', help='skip sanity check')
-
-        # database show
-        p_database_show = p_database_sub.add_parser('show', help='show entity details')
-        p_database_show.add_argument('--diff', action='store_const', dest='diff', const=True, default=None, help='show successive diffs')
-        p_database_show.add_argument('--no-diff', action='store_const', dest='diff', const=False, default=None, help='show file contents')
-        p_database_show.add_argument('--full', action='store_true', help='show all context in diff')
-        p_database_show.add_argument('--latest', action='store_true', help='only show latest migration')
-        p_database_show.add_argument('--pending', action='store_true', help='include pending migrations')
-        p_database_show.add_argument('name', nargs='?', help='name of entity')
+        # database schema load
+        p_database_schema_load = p_database_schema_sub.add_parser('load', help='load schema')
 
         # task
         p_task = p_sub.add_parser('task', help='task management')
@@ -316,7 +300,7 @@ class McKenzie:
 
         self.unsafe = self.conf.general_unsafe
 
-    def _preflight(self, *, database_init=True, database_update=True):
+    def _preflight(self, *, database_init=True, database_current=True):
         if self.unsafe:
             log = logger.warning
         else:
@@ -326,7 +310,7 @@ class McKenzie:
             if not self.unsafe:
                 return False
 
-        if database_update and not self.conf.db.is_updated(log=log):
+        if database_current and not self.conf.db.is_current(log=log):
             if not self.unsafe:
                 return False
 
