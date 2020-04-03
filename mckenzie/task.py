@@ -132,9 +132,6 @@ class TaskManager(Manager):
 
     @staticmethod
     def _run_cmd(chdir, cmd, *args):
-        if cmd is None:
-            return True
-
         kwargs = {
             'cwd': chdir,
             'capture_output': True,
