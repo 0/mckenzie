@@ -296,8 +296,23 @@ class DatabaseSchemaManager(Manager):
                 for path in self._get_schema_files(typ):
                     logger.debug(f'Executing "{path}".')
 
-                    with open(path) as f:
-                        tx.execute(f.read())
+                    try:
+                        with open(path) as f:
+                            tx.execute(f.read())
+                    except Exception as e:
+                        logger.error(path)
+
+                        if isinstance(e, RaisedException):
+                            print(f'Exception was raised: {e.message}')
+                        elif isinstance(e, CheckViolation):
+                            print('Constraint was violated: '
+                                  f'{e.constraint_name}')
+                        elif isinstance(e, psycopg2.ProgrammingError):
+                            print(f'Programming error: {" ".join(e.args)}')
+                        else:
+                            raise
+
+                        raise HandledException()
 
                     paths.append(path)
 
@@ -305,3 +320,5 @@ class DatabaseSchemaManager(Manager):
 
         for path in paths:
             logger.info(path)
+
+        logger.info('Schema loaded successfully.')
