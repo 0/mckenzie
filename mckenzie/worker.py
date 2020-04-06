@@ -103,7 +103,7 @@ class Worker(Instance):
         self.done_due_to_idle = False
 
         # Futures currently executing.
-        self.fut_pending = set()
+        self.fut_executing = set()
         # PIDs currently executing (mapping to task names). This is modified
         # from inside the ThreadPoolExecutor, so self.lock must be acquired for
         # every access.
@@ -259,7 +259,7 @@ class Worker(Instance):
 
             # Fill up with tasks.
             while (not self.quitting
-                    and len(self.fut_pending) < self.worker_cpus):
+                    and len(self.fut_executing) < self.worker_cpus):
                 task = self._choose_task()
 
                 if task is None:
@@ -276,7 +276,7 @@ class Worker(Instance):
                 logger.debug(f'Submitting task "{task_name}" to the pool.')
                 fut = pool.submit(self._execute_task, task_name)
 
-                self.fut_pending.add(fut)
+                self.fut_executing.add(fut)
                 self.fut_task[fut] = task_id, task_name
 
             # Update the status.
@@ -290,12 +290,12 @@ class Worker(Instance):
                         ''', (sum(self.task_mems_mb.values()),
                               self.slurm_job_id))
 
-            if self.fut_pending:
+            if self.fut_executing:
                 # Wait for running tasks.
-                r = futures.wait(self.fut_pending,
+                r = futures.wait(self.fut_executing,
                                  timeout=self.TASK_WAIT_SECONDS,
                                  return_when=futures.FIRST_COMPLETED)
-                fut_done, self.fut_pending = r
+                fut_done, self.fut_executing = r
 
                 for fut in fut_done:
                     # Handle completed task.
@@ -435,10 +435,10 @@ class Worker(Instance):
                         pass
 
                 # Collect remaining futures.
-                r = futures.wait(self.fut_pending,
+                r = futures.wait(self.fut_executing,
                                  timeout=self.TASK_CLEANUP_WAIT_SECONDS,
                                  return_when=futures.ALL_COMPLETED)
-                fut_done, self.fut_pending = r
+                fut_done, self.fut_executing = r
 
                 # If we're here and fut_done isn't empty, something went wrong.
                 # There's a chance that we're being terminated by Slurm and are
