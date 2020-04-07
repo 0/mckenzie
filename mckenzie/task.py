@@ -71,13 +71,17 @@ class TaskClaimError(Exception):
 
 
 class ClaimStack(ExitStack):
-    def __init__(self, mgr, *args, **kwargs):
+    def __init__(self, mgr, *args, init_task_ids=None, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.tx_f = mgr.db.tx
         self.claimed_by = mgr.ident
 
         self.claimed_ids = set()
+
+        if init_task_ids is not None:
+            for task_id in init_task_ids:
+                self.add(task_id)
 
     def add(self, task_id):
         if task_id in self.claimed_ids:
@@ -554,9 +558,7 @@ class TaskManager(Manager):
 
                 continue
 
-            with ClaimStack(self) as cs:
-                cs.add(task_id)
-
+            with ClaimStack(self, init_task_ids=[task_id]) as cs:
                 state = self._ts.lookup(state_id)
                 state_user = self._ts.lookup(state_id, user=True)
 
@@ -770,9 +772,7 @@ class TaskManager(Manager):
 
             return
 
-        with ClaimStack(self) as cs:
-            cs.add(task_id)
-
+        with ClaimStack(self, init_task_ids=[task_id]) as cs:
             state_user = self._ts.lookup(state_id, user=True)
 
             if incomplete:
@@ -944,24 +944,21 @@ class TaskManager(Manager):
             logger.info(task_name)
 
     def reset_failed(self, args):
-        with ClaimStack(self) as cs:
-            @self.db.tx
-            def tasks(tx):
-                return tx.execute('''
-                        WITH failed_tasks AS (
-                            SELECT id, name
-                            FROM task
-                            WHERE state_id = %s
-                            FOR UPDATE
-                        )
+        @self.db.tx
+        def tasks(tx):
+            return tx.execute('''
+                    WITH failed_tasks AS (
                         SELECT id, name
-                        FROM failed_tasks
-                        WHERE task_claim(id, %s)
-                        ''', (self._ts.rlookup('ts_failed'), self.ident))
+                        FROM task
+                        WHERE state_id = %s
+                        FOR UPDATE
+                    )
+                    SELECT id, name
+                    FROM failed_tasks
+                    WHERE task_claim(id, %s)
+                    ''', (self._ts.rlookup('ts_failed'), self.ident))
 
-            for task_id, task_name in tasks:
-                cs.add(task_id)
-
+        with ClaimStack(self, init_task_ids=[x[0] for x in tasks]):
             for task_id, task_name in tasks:
                 if self.mck.interrupted.is_set():
                     break
@@ -1186,9 +1183,7 @@ class TaskManager(Manager):
 
                 continue
 
-            with ClaimStack(self) as cs:
-                cs.add(task_id)
-
+            with ClaimStack(self, init_task_ids=[task_id]):
                 logger.info(task_name)
 
                 elapsed_time_hours = elapsed_time.total_seconds() / 3600
