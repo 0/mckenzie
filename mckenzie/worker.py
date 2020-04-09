@@ -843,12 +843,12 @@ class WorkerManager(Manager):
                                              self.c('warning'))
 
             worker_data.append([str(slurm_job_id), (state_user, state_color),
-                                remaining_time, time_limit, tasks_running_show,
-                                num_cores, tasks_percent_str, num_tasks,
-                                cur_mem_usage_gb, mem_limit_gb,
-                                cur_mem_usage_percent_str])
+                                node, remaining_time, time_limit,
+                                tasks_running_show, num_cores,
+                                tasks_percent_str, num_tasks, cur_mem_usage_gb,
+                                mem_limit_gb, cur_mem_usage_percent_str])
 
-        self.print_table(['Job ID', 'State', ('Time (R/T)', 2),
+        self.print_table(['Job ID', 'State', 'Node', ('Time (R/T)', 2),
                           ('Tasks (R/C/%/T)', 4), ('Mem (GB;U/T/%)', 3)],
                          worker_data)
 
