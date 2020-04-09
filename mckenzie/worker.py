@@ -108,6 +108,8 @@ class Worker(Instance):
         # from inside the ThreadPoolExecutor, so self.lock must be acquired for
         # every access.
         self.running_pids = {}
+        # Memory usage for tasks that are over their limit.
+        self.overmemory_mb = {}
 
         # Mapping of futures to task IDs and names.
         self.fut_task = {}
@@ -220,9 +222,96 @@ class Worker(Instance):
         # The units of ru_maxrss should be KB.
         return True, success, p.stdout.read(), int(wait_usage.ru_maxrss)
 
+    def _handle_completed_task(self, task_id, task_name, task_ran, success,
+                               output, max_mem_kb):
+        max_mem_mb = max_mem_kb / 1024
+
+        if success:
+            output = output.split('\n')
+
+            # Ignore any empty lines that may have been included after the
+            # success string.
+            while output and output[-1] == '':
+                output.pop()
+
+            ss = self.conf.worker_success_string
+
+            if output and output[-1] == ss:
+                reason_id = self._tr.rlookup('tr_success')
+            else:
+                success = False
+                reason_id = self._tr.rlookup('tr_failure_string')
+        elif not task_ran:
+            reason_id = self._tr.rlookup('tr_failure_run')
+        elif task_name in self.overmemory_mb:
+            reason_id = self._tr.rlookup('tr_failure_memory')
+        else:
+            reason_id = self._tr.rlookup('tr_failure_exit_code')
+
+        if success:
+            state_id = self._ts.rlookup('ts_done')
+        else:
+            state_id = self._ts.rlookup('ts_failed')
+
+        logger.debug(f'"{task_name}": {success}')
+
+        # Update the task as necessary before giving it up.
+        duration = datetime.now() - self.task_starts[task_name]
+
+        @self.db.tx
+        def F(tx):
+            limit_retry = False
+
+            # Extend the task memory limit if it was underestimated, even if
+            # the task finished successfully, because it might get rerun later.
+            if task_name in self.overmemory_mb:
+                rss_mb = self.overmemory_mb.pop(task_name)
+                new_limit_mb = 1.2 * rss_mb
+
+                tx.execute('''
+                        UPDATE task
+                        SET mem_limit_mb = %s
+                        WHERE id = %s
+                        AND mem_limit_mb < %s
+                        ''', (new_limit_mb, task_id, rss_mb))
+
+                if not success:
+                    limit_retry = True
+
+            tx.execute('''
+                    UPDATE task
+                    SET elapsed_time = %s,
+                        max_mem_mb = %s
+                    WHERE id = %s
+                    ''', (duration, max_mem_mb, task_id))
+
+            tx.execute('''
+                    INSERT INTO task_history (task_id, state_id, reason_id,
+                                              worker_id)
+                    VALUES (%s, %s, %s, %s)
+                    ''', (task_id, state_id, reason_id,
+                          self.slurm_job_id))
+
+            if (limit_retry
+                    and TaskManager._clean(self.conf, task_name)):
+                # The task was unsuccessful and its memory limit was
+                # underestimated. We've increased the limit, and will retry the
+                # task automatically as long as we can clean it.
+                tx.execute('''
+                        INSERT INTO task_history (task_id, state_id, reason_id,
+                                                  worker_id)
+                        VALUES (%s, %s, %s, %s)
+                        ''', (task_id, self._ts.rlookup('ts_waiting'),
+                              self._tr.rlookup('tr_limit_retry'),
+                              self.slurm_job_id))
+
+            # We're completely done with the task, so let it go.
+            TaskManager._unclaim(tx, task_id, self.ident)
+
+        self.task_starts.pop(task_name)
+        self.task_mems_mb.pop(task_name)
+
     def _run(self, pool):
-        # Memory usage for tasks that are over their limit.
-        overmemory_mb = {}
         # Only output the warning once.
         rss_fail_warn = False
 
@@ -250,7 +339,7 @@ class Worker(Instance):
                                 'using too much memory '
                                 f'({rss_mb} MB > {limit_mb} MB).')
 
-                    overmemory_mb[task_name] = rss_mb
+                    self.overmemory_mb[task_name] = rss_mb
 
                     try:
                         os.killpg(pid, signal.SIGKILL)
@@ -298,100 +387,9 @@ class Worker(Instance):
                 fut_done, self.fut_executing = r
 
                 for fut in fut_done:
-                    # Handle completed task.
                     task_id, task_name = self.fut_task.pop(fut)
-                    task_ran, success, output, max_mem_kb = fut.result()
-                    max_mem_mb = max_mem_kb / 1024
-
-                    if success:
-                        output = output.split('\n')
-
-                        # Ignore any empty lines that may have been included
-                        # after the success string.
-                        while output and output[-1] == '':
-                            output.pop()
-
-                        ss = self.conf.worker_success_string
-
-                        if output and output[-1] == ss:
-                            reason_id = self._tr.rlookup('tr_success')
-                        else:
-                            success = False
-                            reason_id = self._tr.rlookup('tr_failure_string')
-                    elif not task_ran:
-                        reason_id = self._tr.rlookup('tr_failure_run')
-                    elif task_name in overmemory_mb:
-                        reason_id = self._tr.rlookup('tr_failure_memory')
-                    else:
-                        reason_id = self._tr.rlookup('tr_failure_exit_code')
-
-                    if success:
-                        state_id = self._ts.rlookup('ts_done')
-                    else:
-                        state_id = self._ts.rlookup('ts_failed')
-
-                    logger.debug(f'"{task_name}": {success}')
-
-                    # Update the task as necessary before giving it up.
-                    duration = datetime.now() - self.task_starts[task_name]
-
-                    @self.db.tx
-                    def F(tx):
-                        limit_retry = False
-
-                        # Extend the task memory limit if it was
-                        # underestimated, even if the task finished
-                        # successfully, because it might get rerun later.
-                        if task_name in overmemory_mb:
-                            rss_mb = overmemory_mb.pop(task_name)
-                            new_limit_mb = 1.2 * rss_mb
-
-                            tx.execute('''
-                                    UPDATE task
-                                    SET mem_limit_mb = %s
-                                    WHERE id = %s
-                                    AND mem_limit_mb < %s
-                                    ''', (new_limit_mb, task_id, rss_mb))
-
-                            if not success:
-                                limit_retry = True
-
-                        tx.execute('''
-                                UPDATE task
-                                SET elapsed_time = %s,
-                                    max_mem_mb = %s
-                                WHERE id = %s
-                                ''', (duration, max_mem_mb, task_id))
-
-                        tx.execute('''
-                                INSERT INTO task_history (task_id, state_id,
-                                                          reason_id, worker_id)
-                                VALUES (%s, %s, %s, %s)
-                                ''', (task_id, state_id, reason_id,
-                                      self.slurm_job_id))
-
-                        if (limit_retry
-                                and TaskManager._clean(self.conf, task_name)):
-                            # The task was unsuccessful and its memory limit
-                            # was underestimated. We've increased the limit,
-                            # and will retry the task automatically as long as
-                            # we can clean it.
-                            tx.execute('''
-                                    INSERT INTO task_history (task_id,
-                                                              state_id,
-                                                              reason_id,
-                                                              worker_id)
-                                    VALUES (%s, %s, %s, %s)
-                                    ''', (task_id,
-                                          self._ts.rlookup('ts_waiting'),
-                                          self._tr.rlookup('tr_limit_retry'),
-                                          self.slurm_job_id))
-
-                        # We're completely done with the task, so let it go.
-                        TaskManager._unclaim(tx, task_id, self.ident)
-
-                    self.task_starts.pop(task_name)
-                    self.task_mems_mb.pop(task_name)
+                    self._handle_completed_task(task_id, task_name,
+                                                *fut.result())
             elif self.quitting:
                 self.done = True
             else:
