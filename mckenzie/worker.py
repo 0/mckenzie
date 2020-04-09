@@ -1172,7 +1172,7 @@ class WorkerManager(Manager):
         mck_cmd = shlex.quote(self.conf.worker_mck_cmd)
 
         if self.conf.worker_mck_args is not None:
-            mck_args = shlex.quote(self.conf.worker_mck_args)
+            mck_args = self.conf.worker_mck_args
         else:
             mck_args = ''
 
