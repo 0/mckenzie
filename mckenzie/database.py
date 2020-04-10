@@ -1,7 +1,9 @@
 from contextlib import contextmanager
+from datetime import datetime
 from enum import Enum, IntEnum
 import logging
 import os
+import subprocess
 import time
 
 import pkg_resources
@@ -9,7 +11,7 @@ import psycopg2
 from psycopg2 import errorcodes
 
 from .base import Manager
-from .util import HandledException
+from .util import HandledException, check_proc
 
 
 logger = logging.getLogger(__name__)
@@ -315,6 +317,41 @@ class DatabaseManager(Manager):
 
         logger.info(f'Database "{self.db.dbname}" at '
                     f'{self.db.host}:{self.db.port} is OK.')
+
+
+class DatabaseBackupManager(Manager):
+    def summary(self, args):
+        logger.info('No action specified.')
+
+    def run(self, args):
+        timestamp = datetime.now().isoformat(timespec='seconds')
+        output_path = self.conf.database_path / f'backup_{timestamp}'
+
+        proc_args = ['pg_basebackup']
+        proc_args.append('--pgdata=' + str(output_path))
+        proc_args.append('--checkpoint=fast')
+        proc_args.append('--wal-method=stream')
+        proc_args.append('--format=tar')
+        proc_args.append('--gzip')
+        proc_args.append('--compress=9')
+        proc_args.append('--no-sync')
+        proc_args.append('--progress')
+        proc_args.append('--verbose')
+        proc_args.append('--no-password')
+        proc_args.append('--host=' + self.db.host)
+        proc_args.append('--port=' + str(self.db.port))
+        proc_args.append('--username=' + self.db.user)
+
+        proc_env = {'PGPASSWORD': self.db.password}
+
+        logger.debug(f'Starting backup to {output_path}.')
+
+        proc = subprocess.run(proc_args, env=proc_env)
+
+        if not check_proc(proc, log=logger.error):
+            return
+
+        logger.debug('Backup completed.')
 
 
 class DatabaseSchemaManager(Manager):

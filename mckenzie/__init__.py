@@ -9,7 +9,8 @@ from threading import Event
 from .batch import BatchManager
 from .color import Colorizer
 from .conf import Conf
-from .database import DatabaseManager, DatabaseSchemaManager
+from .database import (DatabaseManager, DatabaseBackupManager,
+                       DatabaseSchemaManager)
 from .task import TaskManager
 from .util import foreverdict
 from .worker import WorkerManager
@@ -28,6 +29,7 @@ class McKenzie:
     MANAGERS = {
         'batch': BatchManager,
         'database': DatabaseManager,
+        'database.backup': DatabaseBackupManager,
         'database.schema': DatabaseSchemaManager,
         'task': TaskManager,
         'worker': WorkerManager,
@@ -40,6 +42,9 @@ class McKenzie:
         },
         'database': {
             'database_init': False,
+            'database_current': False,
+        },
+        'database.backup': {
             'database_current': False,
         },
         'database.schema': {
@@ -97,6 +102,13 @@ class McKenzie:
         # database
         p_database = p_sub.add_parser('database', help='database management')
         p_database_sub = p_database.add_subparsers(dest='subcommand')
+
+        # database backup
+        p_database_backup = p_database_sub.add_parser('backup', help='database backup')
+        p_database_backup_sub = p_database_backup.add_subparsers(dest='subsubcommand')
+
+        # database backup run
+        p_database_backup_run = p_database_backup_sub.add_parser('run', help='run backup')
 
         # database schema
         p_database_schema = p_database_sub.add_parser('schema', help='schema management')
