@@ -12,7 +12,7 @@ from time import sleep
 
 from .base import DatabaseReasonView, DatabaseStateView, Instance, Manager
 from .task import TaskManager, TaskReason, TaskState
-from .util import (HandledException, check_proc, check_scancel,
+from .util import (HandledException, cancel_slurm_job, check_proc,
                    humanize_datetime, mem_rss_mb)
 
 
@@ -922,48 +922,34 @@ class WorkerManager(Manager):
             if self.mck.interrupted.is_set():
                 break
 
-            # Try to cancel it before it gets a chance to run.
             logger.debug(f'Attempting to cancel worker {slurm_job_id}.')
+            cancel_result = cancel_slurm_job(slurm_job_id,
+                                             name=self.conf.worker_name,
+                                             signal=signal, log=logger.error)
 
-            proc = subprocess.run(['scancel', '--verbose', '--state=PENDING',
-                                   str(slurm_job_id)],
-                                  capture_output=True, text=True)
-            cancel_success = check_scancel(proc, log=logger.error)
-
-            if cancel_success is None:
-                # We encountered an error, so give up.
+            if cancel_result is None:
                 return
-            elif cancel_success:
+
+            cancel_success, signalled_running = cancel_result
+
+            if cancel_success:
                 logger.info(slurm_job_id)
 
-                @self.db.tx
-                def F(tx):
-                    tx.execute('''
-                            INSERT INTO worker_history (worker_id, state_id,
-                                                        reason_id)
-                            VALUES (%s, %s, %s)
-                            ''', (slurm_job_id,
-                                  self._ws.rlookup('ws_cancelled'),
-                                  self._wr.rlookup('wr_worker_quit_cancelled')))
-
-                continue
-
-            # It's already running (or finished), so try to send a signal.
-            logger.debug(f'Attempting to signal worker {slurm_job_id}.')
-
-            proc = subprocess.run(['scancel', '--verbose', '--state=RUNNING',
-                                   '--batch', f'--signal={signal}',
-                                   str(slurm_job_id)],
-                                  capture_output=True, text=True)
-            signal_success = check_scancel(proc, log=logger.error)
-
-            if signal_success is None:
-                # We encountered an error, so give up.
-                return
-            elif signal_success:
-                logger.info(slurm_job_id)
-
-                continue
+                if signalled_running:
+                    # Signalled running.
+                    pass
+                else:
+                    # Cancelled pending.
+                    @self.db.tx
+                    def F(tx):
+                        tx.execute('''
+                                INSERT INTO worker_history (worker_id,
+                                                            state_id,
+                                                            reason_id)
+                                VALUES (%s, %s, %s)
+                                ''', (slurm_job_id,
+                                      self._ws.rlookup('ws_cancelled'),
+                                      self._wr.rlookup('wr_worker_quit_cancelled')))
 
     def run(self, args):
         try:
