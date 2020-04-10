@@ -181,23 +181,23 @@ class Database:
     def tx(self, f):
         logger.debug('Starting transaction.')
 
-        with self.conn:
-            with self.conn.cursor() as curs:
-                tx = Transaction(curs)
-                retries_left = self.NUM_RETRIES
+        retries_left = self.NUM_RETRIES
 
-                while True:
-                    try:
+        while True:
+            try:
+                with self.conn:
+                    with self.conn.cursor() as curs:
+                        tx = Transaction(curs)
+
                         return f(tx)
-                    except psycopg2.extensions.TransactionRollbackError:
-                        if retries_left <= 0:
-                            logger.warning('Out of retries!')
+            except psycopg2.extensions.TransactionRollbackError:
+                if retries_left <= 0:
+                    logger.warning('Out of retries!')
 
-                            raise
+                    raise
 
-                        logger.debug('Retrying transaction.')
-                        tx.rollback()
-                        retries_left -= 1
+            logger.debug('Retrying transaction.')
+            retries_left -= 1
 
     @contextmanager
     def advisory(self, *args, **kwargs):
