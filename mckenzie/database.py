@@ -163,16 +163,29 @@ class Database:
 
         return int(db_version[0][0])
 
-    def __init__(self, *, dbname, user, password, host, port):
+    def __init__(self, *, dbname, user, password, host_file_path, port):
         self.dbname = dbname
         self.user = user
         self.password = password
-        self.host = host
+        self.host_file_path = host_file_path
         self.port = port
 
+        self._host = None
         self._conn = None
 
         self.try_to_reconnect = True
+
+    @property
+    def host(self):
+        if self._host is None:
+            logger.debug('Reading host.')
+
+            with open(self.host_file_path) as f:
+                self._host = f.readline().strip()
+
+            logger.debug(f'Host set to "{self._host}".')
+
+        return self._host
 
     @property
     def conn(self):
@@ -192,6 +205,7 @@ class Database:
             pass
 
         self._conn = None
+        self._host = None
 
     def tx(self, f):
         logger.debug('Starting transaction.')

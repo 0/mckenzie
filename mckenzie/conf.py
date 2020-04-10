@@ -78,7 +78,7 @@ class Conf:
         self.db = Database(dbname=self.getstr('database', 'dbname'),
                            user=self.getstr('database', 'user'),
                            password=self.getstr('database', 'password'),
-                           host=self.getstr('database', 'host'),
+                           host_file_path=Path(self.getstr('database', 'host_file_path')),
                            port=self.getint('database', 'port'))
 
         self.task_cleanup_cmd = self.getstr('task', 'cleanup_cmd')
