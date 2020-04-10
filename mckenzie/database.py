@@ -2,6 +2,7 @@ from contextlib import contextmanager
 from enum import Enum, IntEnum
 import logging
 import os
+import time
 
 import pkg_resources
 import psycopg2
@@ -132,6 +133,9 @@ class Database:
     # How many times to retry in case of deadlock.
     NUM_RETRIES = 16
 
+    # 0.1 minutes
+    RECONNECT_WAIT_SECONDS = 6
+
     @staticmethod
     def schema_version(tx):
         tx.savepoint('metadata_schema_version')
@@ -168,6 +172,8 @@ class Database:
 
         self._conn = None
 
+        self.try_to_reconnect = True
+
     @property
     def conn(self):
         if self._conn is None:
@@ -177,6 +183,15 @@ class Database:
                                           host=self.host, port=self.port)
 
         return self._conn
+
+    def close(self):
+        try:
+            if self._conn is not None:
+                self._conn.close()
+        except psycopg2.InterfaceError:
+            pass
+
+        self._conn = None
 
     def tx(self, f):
         logger.debug('Starting transaction.')
@@ -190,14 +205,39 @@ class Database:
                         tx = Transaction(curs)
 
                         return f(tx)
-            except psycopg2.extensions.TransactionRollbackError:
+            except Exception as e:
                 if retries_left <= 0:
                     logger.warning('Out of retries!')
 
                     raise
 
+                if isinstance(e, psycopg2.extensions.TransactionRollbackError):
+                    # Simply retry.
+                    pass
+                elif isinstance(e, (psycopg2.InterfaceError,
+                                    psycopg2.OperationalError)):
+                    if not self.try_to_reconnect:
+                        raise
+
+                    # Reconnect before retrying.
+                    logger.debug('Forcing disconnect.')
+                    self.close()
+                    logger.debug('Taking a break.')
+                    time.sleep(self.RECONNECT_WAIT_SECONDS)
+                else:
+                    raise
+
             logger.debug('Retrying transaction.')
             retries_left -= 1
+
+    @contextmanager
+    def without_reconnect(self):
+        value = self.try_to_reconnect
+        self.try_to_reconnect = False
+
+        yield
+
+        self.try_to_reconnect = value
 
     @contextmanager
     def advisory(self, *args, **kwargs):
@@ -214,9 +254,10 @@ class Database:
 
     def is_initialized(self, *, log=logger.info):
         try:
-            @self.tx
-            def result(tx):
-                return tx.execute('SELECT 1')
+            with self.without_reconnect():
+                @self.tx
+                def result(tx):
+                    return tx.execute('SELECT 1')
         except psycopg2.OperationalError:
             success = False
         else:
