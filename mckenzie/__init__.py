@@ -326,7 +326,8 @@ class McKenzie:
         real_handler = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, signal.default_int_handler)
 
-        yield
-
-        # Put back the real handler.
-        signal.signal(signal.SIGINT, real_handler)
+        try:
+            yield
+        finally:
+            # Put back the real handler.
+            signal.signal(signal.SIGINT, real_handler)

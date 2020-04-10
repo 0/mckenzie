@@ -251,9 +251,10 @@ class Database:
         value = self.try_to_reconnect
         self.try_to_reconnect = False
 
-        yield
-
-        self.try_to_reconnect = value
+        try:
+            yield
+        finally:
+            self.try_to_reconnect = value
 
     @contextmanager
     def advisory(self, *args, **kwargs):
