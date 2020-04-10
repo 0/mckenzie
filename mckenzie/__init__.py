@@ -9,8 +9,7 @@ from threading import Event
 from .batch import BatchManager
 from .color import Colorizer
 from .conf import Conf
-from .database import (DatabaseManager, DatabaseBackupManager,
-                       DatabaseSchemaManager)
+from .database import DatabaseManager
 from .task import TaskManager
 from .util import foreverdict
 from .worker import WorkerManager
@@ -29,8 +28,6 @@ class McKenzie:
     MANAGERS = {
         'batch': BatchManager,
         'database': DatabaseManager,
-        'database.backup': DatabaseBackupManager,
-        'database.schema': DatabaseSchemaManager,
         'task': TaskManager,
         'worker': WorkerManager,
     }
@@ -42,12 +39,6 @@ class McKenzie:
         },
         'database': {
             'database_init': False,
-            'database_current': False,
-        },
-        'database.backup': {
-            'database_current': False,
-        },
-        'database.schema': {
             'database_current': False,
         },
     })
@@ -104,18 +95,10 @@ class McKenzie:
         p_database_sub = p_database.add_subparsers(dest='subcommand')
 
         # database backup
-        p_database_backup = p_database_sub.add_parser('backup', help='database backup')
-        p_database_backup_sub = p_database_backup.add_subparsers(dest='subsubcommand')
+        p_database_backup = p_database_sub.add_parser('backup', help='back up database')
 
-        # database backup run
-        p_database_backup_run = p_database_backup_sub.add_parser('run', help='run backup')
-
-        # database schema
-        p_database_schema = p_database_sub.add_parser('schema', help='schema management')
-        p_database_schema_sub = p_database_schema.add_subparsers(dest='subsubcommand')
-
-        # database schema load
-        p_database_schema_load = p_database_schema_sub.add_parser('load', help='load schema')
+        # database load-schema
+        p_database_load_schema = p_database_sub.add_parser('load-schema', help='load schema')
 
         # task
         p_task = p_sub.add_parser('task', help='task management')

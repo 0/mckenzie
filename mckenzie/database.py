@@ -308,6 +308,12 @@ class Database:
 
 
 class DatabaseManager(Manager):
+    @staticmethod
+    def _get_schema_files(typ):
+        d = pkg_resources.resource_filename(__name__, f'schema/{typ}')
+
+        return sorted(os.path.join(d, name) for name in os.listdir(d))
+
     def summary(self, args):
         if not self.db.is_initialized():
             return
@@ -318,12 +324,10 @@ class DatabaseManager(Manager):
         logger.info(f'Database "{self.db.dbname}" at '
                     f'{self.db.host}:{self.db.port} is OK.')
 
+    def backup(self, args):
+        if not self.db.is_initialized(log=logger.error):
+            return
 
-class DatabaseBackupManager(Manager):
-    def summary(self, args):
-        logger.info('No action specified.')
-
-    def run(self, args):
         timestamp = datetime.now().isoformat(timespec='seconds')
         output_path = self.conf.database_path / f'backup_{timestamp}'
 
@@ -353,18 +357,10 @@ class DatabaseBackupManager(Manager):
 
         logger.debug('Backup completed.')
 
+    def load_schema(self, args):
+        if not self.db.is_initialized(log=logger.error):
+            return
 
-class DatabaseSchemaManager(Manager):
-    @staticmethod
-    def _get_schema_files(typ):
-        d = pkg_resources.resource_filename(__name__, f'schema/{typ}')
-
-        return sorted(os.path.join(d, name) for name in os.listdir(d))
-
-    def summary(self, args):
-        logger.info('No action specified.')
-
-    def load(self, args):
         @self.db.tx
         def paths(tx):
             db_version = self.db.schema_version(tx)
