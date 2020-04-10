@@ -75,11 +75,11 @@ class Conf:
         self.general_unsafe = self.getbool('general', 'unsafe',
                                            fallback=False)
 
-        self.db = Database(self.getstr('database', 'dbname'),
-                           self.getstr('database', 'user'),
-                           self.getstr('database', 'password'),
-                           self.getstr('database', 'host'),
-                           self.getint('database', 'port'))
+        self.db = Database(dbname=self.getstr('database', 'dbname'),
+                           user=self.getstr('database', 'user'),
+                           password=self.getstr('database', 'password'),
+                           host=self.getstr('database', 'host'),
+                           port=self.getint('database', 'port'))
 
         self.task_cleanup_cmd = self.getstr('task', 'cleanup_cmd')
         self.task_synthesize_cmd = self.getstr('task', 'synthesize_cmd')

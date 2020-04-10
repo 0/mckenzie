@@ -163,7 +163,7 @@ class Database:
 
         return int(db_version[0][0])
 
-    def __init__(self, dbname, user, password, host, port):
+    def __init__(self, *, dbname, user, password, host, port):
         self.dbname = dbname
         self.user = user
         self.password = password
