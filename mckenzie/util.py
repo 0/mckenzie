@@ -1,5 +1,7 @@
 from collections import defaultdict
+from contextlib import contextmanager
 from datetime import datetime, timedelta
+import fcntl
 import subprocess
 
 
@@ -307,6 +309,18 @@ def mem_rss_mb(pid, *, log):
             return None
 
     return result
+
+
+@contextmanager
+def flock(path):
+    # Open for writing so that it works over NFS as well.
+    with open(path, 'w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 class DirectedAcyclicGraphIterator:
