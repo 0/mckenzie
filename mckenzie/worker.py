@@ -682,7 +682,7 @@ class WorkerManager(Manager):
                     return None
 
                 proc = subprocess.run(['squeue', '--noheader',
-                                       '--jobs='+str(slurm_job_id)],
+                                       '--jobs=' + str(slurm_job_id)],
                                       capture_output=True, text=True)
 
                 if proc.returncode == 0 and proc.stdout:
