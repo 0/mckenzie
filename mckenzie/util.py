@@ -211,12 +211,22 @@ def print_table(pre_header, pre_data, *, reset_str, total=None):
 
 
 def humanize_datetime(dt, now):
-    ago = now - dt
+    if dt <= now:
+        delta = now - dt
+        template = '{} ago'
+    else:
+        delta = dt - now
+        template = 'in {}'
 
-    if ago >= timedelta(hours=24):
+    if delta >= timedelta(hours=24):
         return format_datetime(dt)
 
-    return format_timedelta(ago) + ' ago'
+    delta_fmt = format_timedelta(delta)
+
+    if delta_fmt == '0:00:00':
+        return 'now'
+
+    return template.format(delta_fmt)
 
 
 def check_proc(proc, *, log):
