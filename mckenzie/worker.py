@@ -13,7 +13,7 @@ from time import sleep
 from .base import DatabaseReasonView, DatabaseStateView, Instance, Manager
 from .task import TaskManager, TaskReason, TaskState
 from .util import (HandledException, cancel_slurm_job, check_proc,
-                   humanize_datetime, mem_rss_mb)
+                   check_squeue, humanize_datetime, mem_rss_mb)
 
 
 logger = logging.getLogger(__name__)
@@ -681,11 +681,16 @@ class WorkerManager(Manager):
 
                     return None
 
-                proc = subprocess.run(['squeue', '--noheader',
+                proc = subprocess.run(['squeue', '--noheader', '--format=%A',
                                        '--jobs=' + str(slurm_job_id)],
                                       capture_output=True, text=True)
 
-                if proc.returncode == 0 and proc.stdout:
+                squeue_success = check_squeue(slurm_job_id, proc,
+                                              log=logger.error)
+
+                if squeue_success is None:
+                    raise HandledException()
+                elif squeue_success:
                     ok_worker_ids.append(slurm_job_id)
 
                     return False

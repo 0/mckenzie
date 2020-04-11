@@ -14,8 +14,9 @@ import psycopg2
 from psycopg2 import errorcodes
 
 from .base import Manager
-from .util import (HandledException, cancel_slurm_job, check_proc, flock,
-                   humanize_datetime, parse_slurm_timedelta)
+from .util import (HandledException, cancel_slurm_job, check_proc,
+                   check_squeue, flock, humanize_datetime,
+                   parse_slurm_timedelta)
 
 
 logger = logging.getLogger(__name__)
@@ -569,11 +570,17 @@ class DatabaseManager(Manager):
             while current_job_id is not None:
                 logger.debug('Checking for currently active database.')
 
-                proc = subprocess.run(['squeue', '--noheader',
+                proc = subprocess.run(['squeue', '--noheader', '--format=%A',
                                        '--jobs=' + str(current_job_id)],
                                       capture_output=True, text=True)
 
-                if not (proc.returncode == 0 and proc.stdout):
+                squeue_success = check_squeue(current_job_id, proc,
+                                              log=logger.error)
+
+                if squeue_success is None:
+                    # We encountered an error, so give up.
+                    return
+                elif not squeue_success:
                     logger.debug('Currently active database is not running.')
                     current_job_id = None
 

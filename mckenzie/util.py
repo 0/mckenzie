@@ -313,6 +313,25 @@ def cancel_slurm_job(slurm_job_id, *, name, signal, log):
     return False, None
 
 
+def check_squeue(slurm_job_id, proc, *, log):
+    if proc.stdout.strip() == str(slurm_job_id):
+        return True
+    elif 'slurm_load_jobs error: Invalid job id specified' in proc.stderr:
+        return False
+    elif proc.returncode == 0 and not proc.stdout:
+        return False
+
+    log(f'Encountered an error ({proc.returncode}).')
+
+    if proc.stdout:
+        log(proc.stdout.strip())
+
+    if proc.stderr:
+        log(proc.stderr.strip())
+
+    return None
+
+
 def mem_rss_mb(pid, *, log):
     try:
         # Get the memory usage of each process in the session.
