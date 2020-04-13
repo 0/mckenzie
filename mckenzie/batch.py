@@ -48,7 +48,7 @@ class BatchManager(Manager):
                 batch_args = parser.parse_args(shlex.split(line))
 
                 if progress:
-                    print(f'\r{i+1}/{len(lines)}', end='')
+                    print(f'\r{i+1}/{len(lines)} ', end='')
 
                 self.mck.call_manager(batch_args)
         finally:
