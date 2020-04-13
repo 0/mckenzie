@@ -151,8 +151,7 @@ class TaskManager(Manager):
 
     @classmethod
     def _clean(cls, conf, task_name):
-        return cls._run_cmd(conf.general_chdir, conf.task_cleanup_cmd,
-                            task_name)
+        return cls._run_cmd(conf.general_chdir, conf.task_clean_cmd, task_name)
 
     @classmethod
     def _synthesize(cls, conf, task_name, elapsed_time_hours, max_mem_gb):

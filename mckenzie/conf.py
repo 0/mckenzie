@@ -87,7 +87,7 @@ class Conf:
         self.database_sbatch_args = self.getstr('database', 'sbatch_args',
                                                 fallback=None)
 
-        self.task_cleanup_cmd = self.getstr('task', 'cleanup_cmd')
+        self.task_clean_cmd = self.getstr('task', 'clean_cmd')
         self.task_synthesize_cmd = self.getstr('task', 'synthesize_cmd')
         self.task_unsynthesize_cmd = self.getstr('task', 'unsynthesize_cmd')
 

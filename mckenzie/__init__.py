@@ -138,7 +138,7 @@ class McKenzie:
         p_task_cancel.add_argument('name', nargs='*', help='task name')
 
         # task clean
-        p_task_clean = p_task_sub.add_parser('clean', help='run cleanup command for "cleanable" tasks')
+        p_task_clean = p_task_sub.add_parser('clean', help='run clean command for "cleanable" tasks')
         p_task_clean.add_argument('--ignore-pending-dependents', action='store_true', help='include tasks that have pending direct dependents')
 
         # task cleanablize
