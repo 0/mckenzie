@@ -154,6 +154,10 @@ class TaskManager(Manager):
         return cls._run_cmd(conf.general_chdir, conf.task_clean_cmd, task_name)
 
     @classmethod
+    def _scrub(cls, conf, task_name):
+        return cls._run_cmd(conf.general_chdir, conf.task_scrub_cmd, task_name)
+
+    @classmethod
     def _synthesize(cls, conf, task_name, elapsed_time_hours, max_mem_gb):
         return cls._run_cmd(conf.general_chdir, conf.task_synthesize_cmd,
                             task_name, elapsed_time_hours, max_mem_gb)
@@ -905,6 +909,9 @@ class TaskManager(Manager):
                                           self._ts.rlookup('ts_waiting'),
                                           self._tr.rlookup('tr_task_rerun_reset')))
 
+                        if not self._scrub(self.conf, task_name):
+                            return
+
                         state = 'ts_waiting'
             finally:
                 @self.db.tx
@@ -975,6 +982,9 @@ class TaskManager(Manager):
                             VALUES (%s, %s, %s)
                             ''', (task_id, self._ts.rlookup('ts_waiting'),
                                   self._tr.rlookup('tr_task_reset_failed')))
+
+                if not self._scrub(self.conf, task_name):
+                    return
 
     def show(self, args):
         name = args.name

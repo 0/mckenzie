@@ -88,6 +88,7 @@ class Conf:
                                                 fallback=None)
 
         self.task_clean_cmd = self.getstr('task', 'clean_cmd')
+        self.task_scrub_cmd = self.getstr('task', 'scrub_cmd')
         self.task_synthesize_cmd = self.getstr('task', 'synthesize_cmd')
         self.task_unsynthesize_cmd = self.getstr('task', 'unsynthesize_cmd')
 
