@@ -97,8 +97,27 @@ class McKenzie:
         # database backup
         p_database_backup = p_database_sub.add_parser('backup', help='back up database')
 
+        # database list
+        p_database_list = p_database_sub.add_parser('list', help='list database jobs')
+
         # database load-schema
         p_database_load_schema = p_database_sub.add_parser('load-schema', help='load schema')
+
+        # database quit
+        p_database_quit = p_database_sub.add_parser('quit', help='signal database jobs to quit')
+        p_database_quit.add_argument('--current', action='store_true', help='signal currently active database')
+        p_database_quit.add_argument('--all', action='store_true', help='signal all database jobs')
+        p_database_quit.add_argument('slurm_job_id', nargs='*', type=int, help='Slurm job ID of database')
+
+        # database run
+        p_database_run = p_database_sub.add_parser('run', help='run database')
+
+        # database spawn
+        p_database_spawn = p_database_sub.add_parser('spawn', help='spawn Slurm database job')
+        p_database_spawn.add_argument('--cpus', metavar='C', type=int, required=True, help='number of CPUs')
+        p_database_spawn.add_argument('--time-hr', metavar='T', type=float, required=True, help='time limit in hours')
+        p_database_spawn.add_argument('--mem-gb', metavar='M', type=float, required=True, help='amount of memory in GB')
+        p_database_spawn.add_argument('--sbatch-args', metavar='SA', help='additional arguments to pass to sbatch')
 
         # task
         p_task = p_sub.add_parser('task', help='task management')

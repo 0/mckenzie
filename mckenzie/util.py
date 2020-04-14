@@ -229,6 +229,21 @@ def humanize_datetime(dt, now):
     return template.format(delta_fmt)
 
 
+def parse_slurm_timedelta(s):
+    # Input is of the form "days-hours:minutes:seconds", where we assume that
+    # each piece except the last is optional.
+    pieces = reversed(s.replace('-', ':').split(':'))
+    multipliers = [60, 60, 24, 0]
+
+    total = 0
+
+    for piece, multiplier in reversed(list(zip(pieces, multipliers))):
+        total *= multiplier
+        total += int(piece)
+
+    return timedelta(seconds=total)
+
+
 def check_proc(proc, *, log):
     if proc.returncode != 0:
         log(f'Encountered an error ({proc.returncode}).')

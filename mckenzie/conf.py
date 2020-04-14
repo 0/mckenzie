@@ -75,13 +75,17 @@ class Conf:
         self.general_unsafe = self.getbool('general', 'unsafe',
                                            fallback=False)
 
-        self.database_path = Path(self.getstr('database', 'path'))
-        hfp = self.database_path / self.getstr('database', 'host_file_path')
-        self.db = Database(dbname=self.getstr('database', 'dbname'),
+        self.database_name = self.getstr('database', 'name')
+        self.db = Database(path=Path(self.getstr('database', 'path')),
+                           dbname=self.getstr('database', 'dbname'),
                            user=self.getstr('database', 'user'),
                            password=self.getstr('database', 'password'),
-                           host_file_path=hfp,
                            port=self.getint('database', 'port'))
+        self.database_mck_cmd = self.getstr('database', 'mck_cmd')
+        self.database_mck_args = self.getstr('database', 'mck_args',
+                                             fallback=None)
+        self.database_sbatch_args = self.getstr('database', 'sbatch_args',
+                                                fallback=None)
 
         self.task_cleanup_cmd = self.getstr('task', 'cleanup_cmd')
         self.task_synthesize_cmd = self.getstr('task', 'synthesize_cmd')
