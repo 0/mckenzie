@@ -929,7 +929,7 @@ class WorkerManager(Manager):
 
             logger.debug(f'Attempting to cancel worker {slurm_job_id}.')
             cancel_result = cancel_slurm_job(slurm_job_id,
-                                             name=self.conf.worker_name,
+                                             name=self.conf.worker_job_name,
                                              signal=signal, log=logger.error)
 
             if cancel_result is None:
@@ -1144,7 +1144,7 @@ class WorkerManager(Manager):
         proc_args = ['sbatch']
         proc_args.append('--hold')
         proc_args.append('--parsable')
-        proc_args.append('--job-name=' + self.conf.worker_name)
+        proc_args.append('--job-name=' + self.conf.worker_job_name)
         proc_args.append('--signal=B:TERM@' + str(self.END_SIGNAL_SECONDS))
         proc_args.append('--chdir=' + str(self.conf.general_chdir))
         proc_args.append('--output=' + str(self._worker_output_file()))

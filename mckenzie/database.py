@@ -170,42 +170,42 @@ class Database:
 
         return int(db_version[0][0])
 
-    def __init__(self, *, path, dbname, user, password, port):
-        self.path = path
+    def __init__(self, *, dbpath, dbname, dbuser, dbpassword, dbport):
+        self.dbpath = dbpath
         self.dbname = dbname
-        self.user = user
-        self.password = password
-        self.port = port
+        self.dbuser = dbuser
+        self.dbpassword = dbpassword
+        self.dbport = dbport
 
-        self._host = None
+        self._dbhost = None
         self._conn = None
 
         self.try_to_reconnect = True
 
     @property
-    def host(self):
-        if self._host is None:
+    def dbhost(self):
+        if self._dbhost is None:
             logger.debug('Reading host.')
 
             try:
-                with open(self.path / 'host') as f:
-                    self._host = f.readline().strip()
+                with open(self.dbpath / 'host') as f:
+                    self._dbhost = f.readline().strip()
             except FileNotFoundError:
                 logger.error('Database host file not found.')
 
                 raise HandledException()
 
-            logger.debug(f'Host set to "{self._host}".')
+            logger.debug(f'Host set to "{self._dbhost}".')
 
-        return self._host
+        return self._dbhost
 
     @property
     def conn(self):
         if self._conn is None:
             logger.debug('Connecting to database.')
-            self._conn = psycopg2.connect(dbname=self.dbname, user=self.user,
-                                          password=self.password,
-                                          host=self.host, port=self.port)
+            self._conn = psycopg2.connect(dbname=self.dbname, user=self.dbuser,
+                                          password=self.dbpassword,
+                                          host=self.dbhost, port=self.dbport)
 
         return self._conn
 
@@ -217,7 +217,7 @@ class Database:
             pass
 
         self._conn = None
-        self._host = None
+        self._dbhost = None
 
     def tx(self, f):
         logger.debug('Starting transaction.')
@@ -291,8 +291,8 @@ class Database:
             success = result == [(1,)]
 
         if not success:
-            log(f'Database "{self.dbname}" at {self.host}:{self.port} has not '
-                'been initialized.')
+            log(f'Database "{self.dbname}" at {self.dbhost}:{self.dbport} has '
+                'not been initialized.')
 
         return success
 
@@ -351,14 +351,14 @@ class DatabaseManager(Manager):
             return
 
         logger.info(f'Database "{self.db.dbname}" at '
-                    f'{self.db.host}:{self.db.port} is OK.')
+                    f'{self.db.dbhost}:{self.db.dbport} is OK.')
 
     def backup(self, args):
         if not self.db.is_initialized(log=logger.error):
             return
 
         timestamp = datetime.now().isoformat(timespec='seconds')
-        output_path = self.db.path / f'backup_{timestamp}'
+        output_path = self.db.dbpath / f'backup_{timestamp}'
 
         proc_args = ['pg_basebackup']
         proc_args.append('--pgdata=' + str(output_path))
@@ -371,11 +371,11 @@ class DatabaseManager(Manager):
         proc_args.append('--progress')
         proc_args.append('--verbose')
         proc_args.append('--no-password')
-        proc_args.append('--host=' + self.db.host)
-        proc_args.append('--port=' + str(self.db.port))
-        proc_args.append('--username=' + self.db.user)
+        proc_args.append('--host=' + self.db.dbhost)
+        proc_args.append('--port=' + str(self.db.dbport))
+        proc_args.append('--username=' + self.db.dbuser)
 
-        proc_env = {'PGPASSWORD': self.db.password}
+        proc_env = {'PGPASSWORD': self.db.dbpassword}
 
         logger.debug(f'Starting backup to {output_path}.')
 
@@ -393,11 +393,11 @@ class DatabaseManager(Manager):
         proc_args = ['psql']
         proc_args.append('--dbname=' + str(self.db.dbname))
         proc_args.append('--no-password')
-        proc_args.append('--host=' + self.db.host)
-        proc_args.append('--port=' + str(self.db.port))
-        proc_args.append('--username=' + self.db.user)
+        proc_args.append('--host=' + self.db.dbhost)
+        proc_args.append('--port=' + str(self.db.dbport))
+        proc_args.append('--username=' + self.db.dbuser)
 
-        proc_env = {'PGPASSWORD': self.db.password}
+        proc_env = {'PGPASSWORD': self.db.dbpassword}
 
         logger.debug('Starting database client.')
 
@@ -409,7 +409,7 @@ class DatabaseManager(Manager):
 
         proc = subprocess.run(['squeue', '--noheader', '--noconvert',
                                '--user=' + os.environ['USER'],
-                               '--name=' + self.conf.database_name,
+                               '--name=' + self.conf.database_job_name,
                                '--format=' + format_str],
                               capture_output=True, text=True)
 
@@ -527,9 +527,9 @@ class DatabaseManager(Manager):
         if current:
             logger.debug('Waiting for database lock.')
 
-            with flock(self.db.path / 'lock'):
+            with flock(self.db.dbpath / 'lock'):
                 try:
-                    with open(self.db.path / 'jobid') as f:
+                    with open(self.db.dbpath / 'jobid') as f:
                         slurm_job_ids.add(int(f.readline()))
                 except FileNotFoundError:
                     logger.warning('No currently active database found.')
@@ -537,7 +537,7 @@ class DatabaseManager(Manager):
         if all_databases:
             proc = subprocess.run(['squeue', '--noheader',
                                    '--user=' + os.environ['USER'],
-                                   '--name=' + self.conf.database_name,
+                                   '--name=' + self.conf.database_job_name,
                                    '--format=%A'],
                                   capture_output=True, text=True)
 
@@ -553,7 +553,7 @@ class DatabaseManager(Manager):
 
             logger.debug(f'Attempting to cancel Slurm job {slurm_job_id}.')
             cancel_result = cancel_slurm_job(slurm_job_id,
-                                             name=self.conf.database_name,
+                                             name=self.conf.database_job_name,
                                              signal='INT', log=logger.error)
 
             if cancel_result is None:
@@ -576,9 +576,9 @@ class DatabaseManager(Manager):
 
         logger.debug('Waiting for database lock.')
 
-        with flock(self.db.path / 'lock'):
+        with flock(self.db.dbpath / 'lock'):
             try:
-                with open(self.db.path / 'jobid') as f:
+                with open(self.db.dbpath / 'jobid') as f:
                     current_job_id = int(f.readline())
             except FileNotFoundError:
                 logger.debug('No currently active database found.')
@@ -606,7 +606,7 @@ class DatabaseManager(Manager):
                 logger.debug('Attempting to cancel Slurm job '
                              f'{current_job_id}.')
                 cancel_result = cancel_slurm_job(current_job_id,
-                                                 name=self.conf.database_name,
+                                                 name=self.conf.database_job_name,
                                                  signal='INT',
                                                  log=logger.error)
 
@@ -618,17 +618,17 @@ class DatabaseManager(Manager):
 
             logger.debug('Recording new information.')
 
-            with open(self.db.path / 'jobid', 'w') as f:
+            with open(self.db.dbpath / 'jobid', 'w') as f:
                 f.write(str(slurm_job_id))
 
-            with open(self.db.path / 'host', 'w') as f:
+            with open(self.db.dbpath / 'host', 'w') as f:
                 f.write(database_node)
 
         logger.info(f'Starting database in job {slurm_job_id} on '
                     f'{database_node}.')
 
         os.execlp('postgres', 'postgres', '-D',
-                  self.db.path / 'pgdata')
+                  self.db.dbpath / 'pgdata')
 
     def spawn(self, args):
         database_cpus = args.cpus
@@ -641,9 +641,9 @@ class DatabaseManager(Manager):
 
         proc_args = ['sbatch']
         proc_args.append('--parsable')
-        proc_args.append('--job-name=' + self.conf.database_name)
+        proc_args.append('--job-name=' + self.conf.database_job_name)
         proc_args.append('--signal=B:INT@' + str(self.END_SIGNAL_SECONDS))
-        proc_args.append('--chdir=' + str(self.db.path))
+        proc_args.append('--chdir=' + str(self.db.dbpath))
         proc_args.append('--output=' + str(self._database_output_file()))
         proc_args.append('--cpus-per-task=' + str(database_cpus))
         proc_args.append('--time=' + str(database_time_minutes))
@@ -662,7 +662,7 @@ class DatabaseManager(Manager):
         else:
             mck_args = ''
 
-        os.makedirs(self.db.path / self.DATABASE_OUTPUT_DIR,
+        os.makedirs(self.db.dbpath / self.DATABASE_OUTPUT_DIR,
                     exist_ok=True)
 
         script = f'''

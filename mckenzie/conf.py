@@ -75,15 +75,15 @@ class Conf:
         self.general_unsafe = self.getbool('general', 'unsafe',
                                            fallback=False)
 
-        self.database_name = self.getstr('database', 'name')
-        self.db = Database(path=Path(self.getstr('database', 'path')),
+        self.db = Database(dbpath=Path(self.getstr('database', 'path')),
                            dbname=self.getstr('database', 'dbname'),
-                           user=self.getstr('database', 'user'),
-                           password=self.getstr('database', 'password'),
-                           port=self.getint('database', 'port'))
+                           dbuser=self.getstr('database', 'user'),
+                           dbpassword=self.getstr('database', 'password'),
+                           dbport=self.getint('database', 'port'))
         self.database_mck_cmd = self.getstr('database', 'mck_cmd')
         self.database_mck_args = self.getstr('database', 'mck_args',
                                              fallback=None)
+        self.database_job_name = self.getstr('database', 'job_name')
         self.database_sbatch_args = self.getstr('database', 'sbatch_args',
                                                 fallback=None)
 
@@ -92,11 +92,11 @@ class Conf:
         self.task_synthesize_cmd = self.getstr('task', 'synthesize_cmd')
         self.task_unsynthesize_cmd = self.getstr('task', 'unsynthesize_cmd')
 
-        self.worker_name = self.getstr('worker', 'name')
         self.worker_mck_cmd = self.getstr('worker', 'mck_cmd')
         self.worker_mck_args = self.getstr('worker', 'mck_args',
                                            fallback=None)
         self.worker_execute_cmd = self.getstr('worker', 'execute_cmd')
         self.worker_success_string = self.getstr('worker', 'success_string')
+        self.worker_job_name = self.getstr('worker', 'job_name')
         self.worker_sbatch_args = self.getstr('worker', 'sbatch_args',
                                               fallback=None)
