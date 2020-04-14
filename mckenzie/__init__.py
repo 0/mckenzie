@@ -97,6 +97,9 @@ class McKenzie:
         # database backup
         p_database_backup = p_database_sub.add_parser('backup', help='back up database')
 
+        # database client
+        p_database_client = p_database_sub.add_parser('client', help='connect to database')
+
         # database list
         p_database_list = p_database_sub.add_parser('list', help='list database jobs')
 

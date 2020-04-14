@@ -386,6 +386,23 @@ class DatabaseManager(Manager):
 
         logger.debug('Backup completed.')
 
+    def client(self, args):
+        if not self.db.is_initialized(log=logger.error):
+            return
+
+        proc_args = ['psql']
+        proc_args.append('--dbname=' + str(self.db.dbname))
+        proc_args.append('--no-password')
+        proc_args.append('--host=' + self.db.host)
+        proc_args.append('--port=' + str(self.db.port))
+        proc_args.append('--username=' + self.db.user)
+
+        proc_env = {'PGPASSWORD': self.db.password}
+
+        logger.debug('Starting database client.')
+
+        os.execvpe('psql', proc_args, {**os.environ, **proc_env})
+
     def list(self, args):
         columns = ['%A', '%t', '%R', '%P', '%C', '%l', '%m', '%S', '%e']
         format_str = '\t'.join(columns)
