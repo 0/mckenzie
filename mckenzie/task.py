@@ -251,17 +251,21 @@ class TaskManager(Manager):
                 @self.db.tx
                 def task(tx):
                     return tx.execute('''
-                            SELECT id, state_id, task_claim(id, %s)
-                            FROM task
-                            WHERE name = %s
-                            ''', (self.ident, task_name))
+                            SELECT t.id, t.state_id, task_claim(t.id, %s),
+                                   tst.id
+                            FROM task t
+                            LEFT JOIN task_state_transition tst
+                                ON (tst.from_state_id = t.state_id
+                                    AND tst.to_state_id = %s)
+                            WHERE t.name = %s
+                            ''', (self.ident, to_state_id, task_name))
 
                 if len(task) == 0:
                     logger.warning(f'Task "{task_name}" does not exist.')
 
                     continue
 
-                task_id, state_id, claim_success = task[0]
+                task_id, state_id, claim_success, transition = task[0]
                 state_user = self._ts.lookup(state_id, user=True)
 
                 if not claim_success:
@@ -272,6 +276,13 @@ class TaskManager(Manager):
                     continue
 
                 cs.add(task_id)
+
+                if transition is None:
+                    if requested:
+                        logger.warning(f'Task "{task_name}" is in state '
+                                       f'"{state_user}".')
+
+                    continue
 
                 @self.db.tx
                 def success(tx):
