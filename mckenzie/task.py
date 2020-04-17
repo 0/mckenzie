@@ -74,25 +74,21 @@ class ClaimStack(ExitStack):
     def __init__(self, mgr, *args, init_task_ids=None, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self.tx_f = mgr.db.tx
-        self.claimed_by = mgr.ident
-
-        self.claimed_ids = set()
-
         if init_task_ids is not None:
-            for task_id in init_task_ids:
-                self.add(task_id)
+            self.claimed_ids = set(init_task_ids)
+        else:
+            self.claimed_ids = set()
+
+        def unclaim_all():
+            @mgr.db.tx
+            def F(tx):
+                for task_id in self.claimed_ids:
+                    TaskManager._unclaim(tx, task_id, mgr.ident)
+
+        self.callback(unclaim_all)
 
     def add(self, task_id):
-        if task_id in self.claimed_ids:
-            return
-
         self.claimed_ids.add(task_id)
-
-        def F(tx):
-            TaskManager._unclaim(tx, task_id, self.claimed_by)
-
-        self.callback(self.tx_f, F)
 
 
 class TaskManager(Manager):
