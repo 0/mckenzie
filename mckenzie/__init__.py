@@ -161,6 +161,9 @@ class McKenzie:
 
         # task list-claimed
         p_task_list_claimed = p_task_sub.add_parser('list-claimed', help='list claimed tasks')
+        p_task_list_claimed.add_argument('--state', metavar='S', help='only tasks in state S')
+        p_task_list_claimed.add_argument('--name-pattern', metavar='P', help='only tasks with names matching the SQL LIKE pattern P')
+        p_task_list_claimed.add_argument('--longer-than-hr', metavar='T', type=float, help='only tasks claimed for longer than T hours')
 
         # task release
         p_task_release = p_task_sub.add_parser('release', help='change "held" task state to "waiting"')

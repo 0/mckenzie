@@ -713,15 +713,38 @@ class TaskManager(Manager):
                          task_data)
 
     def list_claimed(self, args):
+        state_name = args.state
+        name_pattern = args.name_pattern
+        longer_than_hr = args.longer_than_hr
+
+        state_id = self._parse_state(state_name)
+
         @self.db.tx
         def tasks(tx):
-            return tx.execute('''
+            query = '''
                     SELECT name, state_id, claimed_by, claimed_since,
                            NOW() - claimed_since AS claimed_for
                     FROM task
                     WHERE claimed_by IS NOT NULL
-                    ORDER BY claimed_for
-                    ''')
+                    '''
+            query_args = ()
+
+            if state_id is not None:
+                query += ' AND state_id = %s'
+                query_args += (state_id,)
+
+            if name_pattern is not None:
+                query += ' AND name LIKE %s'
+                query_args += (name_pattern,)
+
+            if longer_than_hr is not None:
+                # claimed_for
+                query += ' AND NOW() - claimed_since > %s'
+                query_args += (timedelta(hours=longer_than_hr),)
+
+            query += ' ORDER BY claimed_for'
+
+            return tx.execute(query, query_args)
 
         if not tasks:
             logger.info('No claimed tasks found.')
