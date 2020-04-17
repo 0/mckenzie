@@ -288,9 +288,8 @@ class McKenzie:
     def _interrupt(self, signum=None, frame=None):
         logger.debug('Interrupted.')
         self.interrupted.set()
-        # If we recieve the signal again, abort. Note that this will not raise
-        # KeyboardInterrupt, but will simply kill the process.
-        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        # If we recieve the signal again, abort in the usual fashion.
+        signal.signal(signal.SIGINT, signal.default_int_handler)
 
     def __init__(self, conf_path, *, unsafe=False, use_colors=False):
         self.conf = Conf(conf_path)
