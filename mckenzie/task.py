@@ -199,86 +199,110 @@ class TaskManager(Manager):
 
     def _simple_state_change(self, from_state_id, to_state_id, reason_id,
                              name_pattern, names):
-        task_names = {name: True for name in names}
+        task_names = names.copy()
 
-        with ClaimStack(self) as cs:
-            if name_pattern is not None:
-                @self.db.tx
-                def tasks(tx):
-                    query = '''
-                            WITH all_tasks AS (
-                                SELECT t.id, t.name
+        while not self.mck.interrupted.is_set():
+            logger.debug('Selecting next task.')
+
+            with ClaimStack(self) as cs:
+                # These values must be set by the time we update the task.
+                task_id = None
+                task_name = None
+                state_user = None
+
+                if task_names:
+                    logger.debug('Using the next explicitly-given task.')
+                    task_name = task_names.pop(0)
+
+                    @self.db.tx
+                    def task(tx):
+                        return tx.execute('''
+                                SELECT t.id, t.state_id, tst.id,
+                                       task_claim(t.id, %s)
                                 FROM task t
-                                JOIN task_state ts ON ts.id = t.state_id
-                                JOIN task_state_transition tst ON tst.from_state_id = t.state_id
-                                WHERE t.name LIKE %s
-                            '''
-                    query_args = (name_pattern,)
+                                LEFT JOIN task_state_transition tst
+                                    ON (tst.from_state_id = t.state_id
+                                        AND tst.to_state_id = %s)
+                                WHERE t.name = %s
+                                ''', (self.ident, to_state_id, task_name))
 
-                    if from_state_id is not None:
-                        query += 'AND t.state_id = %s'
-                        query_args += (from_state_id,)
-                    else:
-                        query += 'AND NOT ts.exceptional'
+                    if len(task) == 0:
+                        logger.warning(f'Task "{task_name}" does not exist.')
 
-                    query += '''
-                                AND tst.to_state_id = %s
-                                AND tst.free_transition
-                                FOR UPDATE OF t SKIP LOCKED
-                            )
-                            SELECT id, name
-                            FROM all_tasks
-                            WHERE task_claim(id, %s)
-                            '''
-                    query_args += (to_state_id, self.ident)
+                        continue
 
-                    return tx.execute(query, query_args)
+                    task_id, state_id, transition, claim_success = task[0]
+                    state_user = self._ts.lookup(state_id, user=True)
 
-                for task_id, task_name in tasks:
-                    cs.add(task_id)
-
-                    if task_name not in task_names:
-                        task_names[task_name] = False
-
-            for task_name, requested in task_names.items():
-                if self.mck.interrupted.is_set():
-                    break
-
-                @self.db.tx
-                def task(tx):
-                    return tx.execute('''
-                            SELECT t.id, t.state_id, task_claim(t.id, %s),
-                                   tst.id
-                            FROM task t
-                            LEFT JOIN task_state_transition tst
-                                ON (tst.from_state_id = t.state_id
-                                    AND tst.to_state_id = %s)
-                            WHERE t.name = %s
-                            ''', (self.ident, to_state_id, task_name))
-
-                if len(task) == 0:
-                    logger.warning(f'Task "{task_name}" does not exist.')
-
-                    continue
-
-                task_id, state_id, claim_success, transition = task[0]
-                state_user = self._ts.lookup(state_id, user=True)
-
-                if not claim_success:
-                    if requested:
+                    if not claim_success:
                         logger.warning(f'Task "{task_name}" could not be '
                                        'claimed.')
 
-                    continue
+                        continue
 
-                cs.add(task_id)
+                    cs.add(task_id)
 
-                if transition is None:
-                    if requested:
+                    if transition is None:
                         logger.warning(f'Task "{task_name}" is in state '
                                        f'"{state_user}".')
 
-                    continue
+                        continue
+                elif name_pattern is not None:
+                    logger.debug('Finding an eligible task.')
+
+                    @self.db.tx
+                    def task(tx):
+                        query = '''
+                                WITH next_task AS (
+                                    SELECT t.id, t.name, t.state_id
+                                    FROM task t
+                                    JOIN task_state ts ON ts.id = t.state_id
+                                    JOIN task_state_transition tst
+                                        ON tst.from_state_id = t.state_id
+                                    WHERE t.claimed_by IS NULL
+                                    AND t.name LIKE %s
+                                '''
+                        query_args = (name_pattern,)
+
+                        if from_state_id is not None:
+                            query += ' AND t.state_id = %s'
+                            query_args += (from_state_id,)
+                        else:
+                            query += ' AND NOT ts.exceptional'
+
+                        query += '''
+                                    AND tst.to_state_id = %s
+                                    AND tst.free_transition
+                                    LIMIT 1
+                                    FOR UPDATE OF t SKIP LOCKED
+                                )
+                                SELECT id, name, state_id, task_claim(id, %s)
+                                FROM next_task
+                                '''
+                        query_args += (to_state_id, self.ident)
+
+                        return tx.execute(query, query_args)
+
+                    if len(task) == 0:
+                        logger.debug('No tasks found.')
+
+                        break
+
+                    task_id, task_name, state_id, claim_success = task[0]
+                    state_user = self._ts.lookup(state_id, user=True)
+
+                    if not claim_success:
+                        logger.debug(f'Failed to claim task "{task_name}".')
+
+                        continue
+
+                    cs.add(task_id)
+                else:
+                    logger.debug('Out of tasks.')
+
+                    break
+
+                logger.debug('Updating task.')
 
                 @self.db.tx
                 def success(tx):
@@ -290,9 +314,8 @@ class TaskManager(Manager):
                                 ''', (task_id, to_state_id, reason_id))
                     except RaisedException as e:
                         if e.message == 'Invalid state transition.':
-                            if requested:
-                                logger.warning(f'Task "{task_name}" is in '
-                                               f'state "{state_user}".')
+                            logger.warning(f'Task "{task_name}" is in state '
+                                           f'"{state_user}".')
                             tx.rollback()
 
                             return False
@@ -305,6 +328,14 @@ class TaskManager(Manager):
                     continue
 
                 logger.info(task_name)
+        else:
+            logger.debug('Interrupted from task loop.')
+
+            return False
+
+        logger.debug('Finished successfully.')
+
+        return True
 
     def _build_rerun_task_list(self, cs, locked_dependency_keys, target_data):
         """
@@ -980,29 +1011,45 @@ class TaskManager(Manager):
             logger.info(task_name)
 
     def reset_failed(self, args):
-        @self.db.tx
-        def tasks(tx):
-            return tx.execute('''
-                    WITH failed_tasks AS (
-                        SELECT id, name
-                        FROM task
-                        WHERE state_id = %s
-                        FOR UPDATE
-                    )
-                    SELECT id, name
-                    FROM failed_tasks
-                    WHERE task_claim(id, %s)
-                    ''', (self._ts.rlookup('ts_failed'), self.ident))
+        while not self.mck.interrupted.is_set():
+            logger.debug('Selecting next task.')
 
-        with ClaimStack(self, init_task_ids=[x[0] for x in tasks]):
-            for task_id, task_name in tasks:
-                if self.mck.interrupted.is_set():
-                    break
+            @self.db.tx
+            def task(tx):
+                return tx.execute('''
+                        WITH failed_task AS (
+                            SELECT id, name
+                            FROM task
+                            WHERE state_id = %s
+                            AND claimed_by IS NULL
+                            LIMIT 1
+                            FOR UPDATE SKIP LOCKED
+                        )
+                        SELECT id, name, task_claim(id, %s)
+                        FROM failed_task
+                        ''', (self._ts.rlookup('ts_failed'), self.ident))
 
+            if len(task) == 0:
+                logger.debug('No tasks found.')
+
+                break
+
+            task_id, task_name, claim_success = task[0]
+
+            if not claim_success:
+                logger.debug(f'Failed to claim task "{task_name}".')
+
+                continue
+
+            with ClaimStack(self, init_task_ids=[task_id]):
                 logger.info(task_name)
+
+                logger.debug('Running clean command.')
 
                 if not self._clean(self.conf, task_name):
                     return
+
+                logger.debug('Updating task.')
 
                 @self.db.tx
                 def F(tx):
@@ -1013,8 +1060,12 @@ class TaskManager(Manager):
                             ''', (task_id, self._ts.rlookup('ts_waiting'),
                                   self._tr.rlookup('tr_task_reset_failed')))
 
+                logger.debug('Running scrub command.')
+
                 if not self._scrub(self.conf, task_name):
                     return
+
+        logger.debug('Exited cleanly.')
 
     def show(self, args):
         name = args.name
