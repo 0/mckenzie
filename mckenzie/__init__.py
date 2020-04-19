@@ -158,6 +158,7 @@ class McKenzie:
         p_task_list = p_task_sub.add_parser('list', help='list tasks')
         p_task_list.add_argument('--state', metavar='S', help='only tasks in state S')
         p_task_list.add_argument('--name-pattern', metavar='P', help='only tasks with names matching the SQL LIKE pattern P')
+        p_task_list.add_argument('--allow-all', action='store_true', help='allow all tasks to be listed')
 
         # task list-claimed
         p_task_list_claimed = p_task_sub.add_parser('list-claimed', help='list claimed tasks')

@@ -704,8 +704,14 @@ class TaskManager(Manager):
     def list(self, args):
         state_name = args.state
         name_pattern = args.name_pattern
+        allow_all = args.allow_all
 
         state_id = self._parse_state(state_name)
+
+        if not allow_all and state_id is None and name_pattern is None:
+            logger.error('Refusing to list all tasks. Use --allow-all.')
+
+            return
 
         @self.db.tx
         def tasks(tx):
