@@ -553,8 +553,6 @@ class TaskManager(Manager):
                                   name_pattern, names)
 
     def clean(self, args):
-        ignore_pending_dependents = args.ignore_pending_dependents
-
         task_names = []
 
         while not self.mck.interrupted.is_set():
@@ -645,8 +643,7 @@ class TaskManager(Manager):
 
                             continue
 
-                        if (not ignore_pending_dependents
-                                and dependent_any_pending):
+                        if dependent_any_pending:
                             logger.warning(f'Task "{task_name}" has pending '
                                            'dependents.')
 
