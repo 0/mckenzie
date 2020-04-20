@@ -548,118 +548,186 @@ class TaskManager(Manager):
                                   name_pattern, names)
 
     def clean(self, args):
-        task_names = []
+        # We start by finishing the cleaning process for tasks that were left
+        # in "cleaning". Once there are no more, we move on to "cleanable"
+        # tasks, which are more difficult to handle.
+        searching_for_cleaning = True
 
         while not self.mck.interrupted.is_set():
             logger.debug('Selecting next task.')
 
-            if not task_names:
-                logger.debug('Fetching new batch.')
+            with ClaimStack(self) as cs:
+                # These values must be set by the time we update the task.
+                task_id = None
+                task_name = None
 
-                @self.db.tx
-                def tasks(tx):
-                    return tx.execute('''
-                            SELECT name
-                            FROM task
-                            WHERE state_id IN (%s, %s)
-                            AND claimed_by IS NULL
-                            LIMIT 1000
-                            ''', (self._ts.rlookup('ts_cleanable'),
-                                  self._ts.rlookup('ts_cleaning')))
+                if searching_for_cleaning:
+                    logger.debug('Searching for task in "cleaning".')
 
-                for task_name, in tasks:
-                    task_names.append(task_name)
+                    @self.db.tx
+                    def task(tx):
+                        return tx.execute('''
+                                WITH next_task AS (
+                                    SELECT id, name
+                                    FROM task
+                                    WHERE state_id = %s
+                                    AND claimed_by IS NULL
+                                    LIMIT 1
+                                    FOR UPDATE SKIP LOCKED
+                                )
+                                SELECT id, name, task_claim(id, %s)
+                                FROM next_task
+                                ''', (self._ts.rlookup('ts_cleaning'),
+                                      self.ident))
 
-            if not task_names:
-                logger.debug('No tasks found.')
+                    if len(task) == 0:
+                        logger.debug('No tasks found.')
+                        searching_for_cleaning = False
 
-                break
+                        continue
 
-            task_name = task_names.pop()
+                    task_id, task_name, claim_success = task[0]
 
-            @self.db.tx
-            def task(tx):
-                return tx.execute('''
-                        SELECT id, state_id, task_claim(id, %s)
-                        FROM task
-                        WHERE name = %s
-                        ''', (self.ident, task_name))
+                    if not claim_success:
+                        logger.debug(f'Failed to claim task "{task_name}".')
 
-            task_id, state_id, claim_success = task[0]
+                        continue
 
-            if not claim_success:
-                logger.debug(f'Failed to claim task "{task_name}".')
+                    cs.add(task_id)
+                else:
+                    logger.debug('Searching for task in "cleanable".')
 
-                continue
+                    # Tasks in "cleanable" are up for cleaning, but they
+                    # satisfy hard dependencies. After we start cleaning them,
+                    # they will only satisfy soft dependencies, so we need to
+                    # make sure that this transition doesn't ruin anyone's day.
+                    # We do this by claiming all the hard dependents and making
+                    # sure that none of them are in a pending state.
+                    #
+                    # First, we select and claim a task that at some recent
+                    # point in time satisfied the criteria.
+                    @self.db.tx
+                    def task(tx):
+                        # If there are no dependent tasks, the left joins in
+                        # the inner-most subquery will populate columns of td,
+                        # t2, and ts2 will NULL, so we must be ready to accept
+                        # such rows.
+                        return tx.execute('''
+                                WITH next_task AS (
+                                    WITH cleanable_tasks AS (
+                                        SELECT t1.id
+                                        FROM task t1
+                                        LEFT JOIN task_dependency td
+                                            ON (td.dependency_id = t1.id
+                                                AND NOT td.soft)
+                                        LEFT JOIN task t2 ON t2.id = td.task_id
+                                        LEFT JOIN task_state ts2
+                                            ON ts2.id = t2.state_id
+                                        WHERE t1.state_id = %s
+                                        AND t1.claimed_by IS NULL
+                                        GROUP BY t1.id
+                                        HAVING COUNT(t2.claimed_by) = 0
+                                        AND COALESCE(NOT BOOL_OR(ts2.pending),
+                                                     TRUE)
+                                    )
+                                    SELECT t.id, t.name
+                                    FROM task t
+                                    JOIN cleanable_tasks ct ON ct.id = t.id
+                                    WHERE t.state_id = %s
+                                    AND t.claimed_by IS NULL
+                                    LIMIT 1
+                                    FOR UPDATE OF t SKIP LOCKED
+                                )
+                                SELECT id, name, task_claim(id, %s)
+                                FROM next_task
+                                ''', (self._ts.rlookup('ts_cleanable'),
+                                      self._ts.rlookup('ts_cleanable'),
+                                      self.ident))
 
-            with ClaimStack(self, init_task_ids=[task_id]) as cs:
-                state = self._ts.lookup(state_id)
-                state_user = self._ts.lookup(state_id, user=True)
+                    if len(task) == 0:
+                        logger.debug('No tasks found.')
 
-                if state == 'ts_cleanable':
-                    # The task is up for cleaning, but it currently satisfies
-                    # hard dependencies. After we start, it will only satisfy
-                    # soft dependencies, so we need to make sure that this
-                    # doesn't ruin anyone's day.
+                        break
+
+                    task_id, task_name, claim_success = task[0]
+
+                    if not claim_success:
+                        logger.debug(f'Failed to claim task "{task_name}".')
+
+                        continue
+
+                    cs.add(task_id)
+
+                    # We have successfully claimed the task, but it's possible
+                    # that it either has new dependents since we first checked,
+                    # or some of them have been claimed or changed state. We
+                    # prevent the addition of any new dependents with the
+                    # advisory lock, and then we'll try to claim all existing
+                    # dependents and check their state.
                     with self.db.advisory(AdvisoryKey.TASK_DEPENDENCY_ACCESS,
                                           task_id % (1<<31),
                                           shared=True):
-                        @self.db.tx
-                        def task_direct_dependents(tx):
-                            return tx.execute('''
-                                    SELECT td.task_id,
-                                           task_claim(td.task_id, %s),
-                                           ts.pending
-                                    FROM task_dependency td
-                                    JOIN task t ON t.id = td.task_id
-                                    JOIN task_state ts ON ts.id = t.state_id
-                                    WHERE td.dependency_id = %s
-                                    AND NOT td.soft
-                                    ''', (self.ident, task_id))
+                        with ClaimStack(self) as cs_dep:
+                            @self.db.tx
+                            def direct_dependents(tx):
+                                return tx.execute('''
+                                        SELECT td.task_id,
+                                               task_claim(td.task_id, %s),
+                                               ts.pending
+                                        FROM task_dependency td
+                                        JOIN task t ON t.id = td.task_id
+                                        JOIN task_state ts ON ts.id = t.state_id
+                                        WHERE td.dependency_id = %s
+                                        AND NOT td.soft
+                                        ''', (self.ident, task_id))
 
-                        dependent_any_claim_failed = False
-                        dependent_any_pending = False
+                            any_dependent_claim_failed = False
+                            any_dependent_pending = False
 
-                        for (dependent_id, dependent_claim_success,
-                                dependent_pending) in task_direct_dependents:
-                            if dependent_claim_success:
-                                cs.add(dependent_id)
-                            else:
-                                dependent_any_claim_failed = True
+                            for (dependent_id, dependent_claim_success,
+                                    dependent_pending) in direct_dependents:
+                                if dependent_claim_success:
+                                    cs_dep.add(dependent_id)
+                                else:
+                                    any_dependent_claim_failed = True
 
-                            if dependent_pending:
-                                dependent_any_pending = True
+                                if dependent_pending:
+                                    any_dependent_pending = True
 
-                        if dependent_any_claim_failed:
-                            # If there were any dependents that we couldn't
-                            # claim, there's no safe way to proceed.
-                            logger.warning('Failed to claim dependent of task '
-                                           f'"{task_name}".')
+                            if any_dependent_claim_failed:
+                                # If there were any dependents that we couldn't
+                                # claim, there's no safe way to proceed.
+                                logger.debug('Failed to claim dependent of task '
+                                             f'"{task_name}".')
 
-                            continue
+                                continue
 
-                        if dependent_any_pending:
-                            logger.warning(f'Task "{task_name}" has pending '
-                                           'dependents.')
+                            if any_dependent_pending:
+                                logger.debug(f'Task "{task_name}" has pending '
+                                             'dependents.')
 
-                            continue
+                                continue
 
-                        @self.db.tx
-                        def F(tx):
-                            tx.execute('''
-                                    INSERT INTO task_history (task_id, state_id,
-                                                              reason_id)
-                                    VALUES (%s, %s, %s)
-                                    ''', (task_id,
-                                          self._ts.rlookup('ts_cleaning'),
-                                          self._tr.rlookup('tr_task_clean_cleaning')))
-                elif state != 'ts_cleaning':
-                    logger.debug(f'Task "{task_name}" is in state '
-                                 f'"{state_user}" and cannot be cleaned.')
-
-                    continue
+                            # Everything looks good, so it's safe to change the
+                            # task's state from "cleanable" to "cleaning", at
+                            # which point it will no longer satisfy any hard
+                            # dependencies and may be safely cleaned. Once the
+                            # state has been changed, we will no longer need to
+                            # hold any claims on the dependent tasks or prevent
+                            # the addition of new ones.
+                            @self.db.tx
+                            def F(tx):
+                                tx.execute('''
+                                        INSERT INTO task_history (task_id,
+                                                                  state_id,
+                                                                  reason_id)
+                                        VALUES (%s, %s, %s)
+                                        ''', (task_id,
+                                              self._ts.rlookup('ts_cleaning'),
+                                              self._tr.rlookup('tr_task_clean_cleaning')))
 
                 logger.info(task_name)
+                logger.debug('Updating task.')
 
                 if not self._clean(self.conf, task_name):
                     return
