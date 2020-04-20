@@ -425,11 +425,6 @@ class TaskManager(Manager):
                     GROUP BY t.state_id, ts.incomplete
                     ''')
 
-        if not tasks:
-            logger.info('No tasks found.')
-
-            return
-
         task_data = []
 
         for state_id, time_limit, elapsed_time, incomplete, count in tasks:
@@ -445,7 +440,7 @@ class TaskManager(Manager):
         sorted_data = sorted(task_data,
                              key=lambda row: self.STATE_ORDER.index(row[0][0]))
         self.print_table(['State', 'Count', 'Total time'], sorted_data,
-                         total=('Total', (1, 2)))
+                         total=('Total', (1, 2), (0, timedelta())))
 
     def add(self, args):
         time_limit = timedelta(hours=args.time_hr)
@@ -786,11 +781,6 @@ class TaskManager(Manager):
             query += ' ORDER BY claimed_for'
 
             return tx.execute(query, query_args)
-
-        if not tasks:
-            logger.info('No claimed tasks found.')
-
-            return
 
         task_data = []
 

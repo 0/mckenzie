@@ -573,11 +573,6 @@ class WorkerManager(Manager):
                     GROUP BY w.state_id, ws.job_exists, ws.job_running, timeout
                     ''', (td,))
 
-        if not workers:
-            logger.info('No workers found.')
-
-            return
-
         worker_data = []
 
         for (state_id, job_exists, job_running, timeout, num_tasks, total_time,
@@ -599,7 +594,8 @@ class WorkerManager(Manager):
         sorted_data = sorted(worker_data,
                              key=lambda row: self.STATE_ORDER.index(row[0][0]))
         self.print_table(['State', 'Count', 'Tasks', 'Remaining time'],
-                         sorted_data, total=('Total', (1, 2, 3)))
+                         sorted_data,
+                         total=('Total', (1, 2, 3), (0, 0, timedelta())))
 
     def ack_failed(self, args):
         @self.db.tx

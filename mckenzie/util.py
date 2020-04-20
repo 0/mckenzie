@@ -56,11 +56,11 @@ def format_object(x):
     return FORMAT_FUNCTIONS[type(x)](x)
 
 
-RIGHT_ALIGNS = set([
+RIGHT_ALIGNS = {
     datetime,
     int,
     timedelta,
-])
+}
 
 def print_table(pre_header, pre_data, *, reset_str, total=None):
     # Convert all header entries to tuples.
@@ -91,20 +91,18 @@ def print_table(pre_header, pre_data, *, reset_str, total=None):
 
     # Format data.
     data_str = []
+    align_types = [None for _ in range(num_cols)]
 
     for row in data:
         row_str = []
 
-        for elem, color in row:
+        for col_idx, (elem, color) in enumerate(row):
             row_str.append((format_object(elem), color))
 
-        data_str.append(row_str)
+            if align_types[col_idx] is None and elem is not None:
+                align_types[col_idx] = type(elem)
 
-    # Determine alignments.
-    aligns = []
-    if num_rows > 0:
-        for elem, color in data[0]:
-            aligns.append('>' if type(elem) in RIGHT_ALIGNS else '<')
+        data_str.append(row_str)
 
     # Compute column totals.
     if total is not None:
@@ -116,19 +114,30 @@ def print_table(pre_header, pre_data, *, reset_str, total=None):
             if col_idx == 0:
                 # Label.
                 tot = total[0]
-            elif col_idx in total[1]:
-                for row in data:
-                    elem, color = row[col_idx]
+            else:
+                try:
+                    tot_idx = total[1].index(col_idx)
+                except ValueError:
+                    pass
+                else:
+                    # Initial value.
+                    tot = total[2][tot_idx]
 
-                    if elem is None or isinstance(elem, str):
-                        continue
+                    for row in data:
+                        elem, color = row[col_idx]
 
-                    if tot is None:
-                        tot = elem
-                    else:
+                        if elem is None or isinstance(elem, str):
+                            continue
+
                         tot += elem
 
             total_row.append(format_object(tot))
+
+            if align_types[col_idx] is None and tot is not None:
+                align_types[col_idx] = type(tot)
+
+    # Determine alignments.
+    aligns = ['>' if t in RIGHT_ALIGNS else '<' for t in align_types]
 
     # Compute column widths and separators.
     max_widths = [0 for _ in range(num_cols)]
