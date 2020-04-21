@@ -10,6 +10,7 @@ from .batch import BatchManager
 from .color import Colorizer
 from .conf import Conf
 from .database import DatabaseManager
+from .support import SupportManager
 from .task import TaskManager
 from .util import foreverdict
 from .worker import WorkerManager
@@ -28,6 +29,7 @@ class McKenzie:
     MANAGERS = {
         'batch': BatchManager,
         'database': DatabaseManager,
+        'support': SupportManager,
         'task': TaskManager,
         'worker': WorkerManager,
     }
@@ -38,6 +40,10 @@ class McKenzie:
             'database_current': False,
         },
         'database': {
+            'database_init': False,
+            'database_current': False,
+        },
+        'support': {
             'database_init': False,
             'database_current': False,
         },
@@ -121,6 +127,30 @@ class McKenzie:
         p_database_spawn.add_argument('--time-hr', metavar='T', type=float, required=True, help='time limit in hours')
         p_database_spawn.add_argument('--mem-gb', metavar='M', type=float, required=True, help='amount of memory in GB')
         p_database_spawn.add_argument('--sbatch-args', metavar='SA', help='additional arguments to pass to sbatch')
+
+        # support
+        p_support = p_sub.add_parser('support', help='support job management')
+        p_support_sub = p_support.add_subparsers(dest='subcommand')
+
+        # support attach
+        p_support_attach = p_support_sub.add_parser('attach', help='attach to support job')
+        p_support_attach.add_argument('slurm_job_id', type=int, help='Slurm job ID of support job')
+
+        # support list
+        p_support_list = p_support_sub.add_parser('list', help='list support jobs')
+
+        # support quit
+        p_support_quit = p_support_sub.add_parser('quit', help='signal support jobs to quit')
+        p_support_quit.add_argument('--all', action='store_true', help='signal all support jobs')
+        p_support_quit.add_argument('slurm_job_id', nargs='*', type=int, help='Slurm job ID of support job')
+
+        # support spawn
+        p_support_spawn = p_support_sub.add_parser('spawn', help='spawn Slurm support job')
+        p_support_spawn.add_argument('--cpus', metavar='C', type=int, required=True, help='number of CPUs')
+        p_support_spawn.add_argument('--time-hr', metavar='T', type=float, required=True, help='time limit in hours')
+        p_support_spawn.add_argument('--mem-gb', metavar='M', type=float, required=True, help='amount of memory in GB')
+        p_support_spawn.add_argument('--sbatch-args', metavar='SA', help='additional arguments to pass to sbatch')
+        p_support_spawn.add_argument('--num', type=int, default=1, help='number of support jobs to spawn (default: 1)')
 
         # task
         p_task = p_sub.add_parser('task', help='task management')

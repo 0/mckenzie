@@ -89,6 +89,13 @@ class Conf:
         self.database_sbatch_args = self.getstr('database', 'sbatch_args',
                                                 fallback=None)
 
+        self.support_path = Path(self.getstr('support', 'path'))
+        self.support_execute_cmd = self.getstr('support', 'execute_cmd')
+        self.support_socket_dir_template = self.getstr('support', 'socket_dir_template')
+        self.support_job_name = self.getstr('support', 'job_name')
+        self.support_sbatch_args = self.getstr('support', 'sbatch_args',
+                                               fallback=None)
+
         self.task_clean_cmd = self.getstr('task', 'clean_cmd')
         self.task_scrub_cmd = self.getstr('task', 'scrub_cmd')
         self.task_synthesize_cmd = self.getstr('task', 'synthesize_cmd')
