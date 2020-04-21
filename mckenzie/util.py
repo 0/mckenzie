@@ -2,6 +2,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 import fcntl
+import shlex
 import subprocess
 
 
@@ -251,6 +252,23 @@ def parse_slurm_timedelta(s):
         total += int(piece)
 
     return timedelta(seconds=total)
+
+
+def combine_shell_args(*argss):
+    result = []
+
+    for args in argss:
+        if args is None:
+            continue
+
+        lst = shlex.split(args)
+
+        if lst and lst[0] == '+':
+            result.extend(lst[1:])
+        else:
+            result = lst
+
+    return result
 
 
 def check_proc(proc, *, log):

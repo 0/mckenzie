@@ -15,7 +15,7 @@ from psycopg2 import errorcodes
 
 from .base import Manager
 from .util import (HandledException, cancel_slurm_job, check_proc,
-                   check_squeue, flock, humanize_datetime,
+                   check_squeue, combine_shell_args, flock, humanize_datetime,
                    parse_slurm_timedelta)
 
 
@@ -649,11 +649,9 @@ class DatabaseManager(Manager):
         proc_args.append('--time=' + str(database_time_minutes))
         proc_args.append('--mem=' + str(database_mem_mb))
 
-        if self.conf.database_sbatch_args is not None:
-            proc_args.extend(shlex.split(self.conf.database_sbatch_args))
-
-        if sbatch_args is not None:
-            proc_args.extend(shlex.split(sbatch_args))
+        proc_args.extend(combine_shell_args(self.conf.general_sbatch_args,
+                                            self.conf.database_sbatch_args,
+                                            sbatch_args))
 
         mck_cmd = shlex.quote(self.conf.database_mck_cmd)
 

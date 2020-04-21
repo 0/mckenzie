@@ -13,7 +13,8 @@ from time import sleep
 from .base import DatabaseReasonView, DatabaseStateView, Instance, Manager
 from .task import TaskManager, TaskReason, TaskState
 from .util import (HandledException, cancel_slurm_job, check_proc,
-                   check_squeue, humanize_datetime, mem_rss_mb)
+                   check_squeue, combine_shell_args, humanize_datetime,
+                   mem_rss_mb)
 
 
 logger = logging.getLogger(__name__)
@@ -1148,11 +1149,9 @@ class WorkerManager(Manager):
         proc_args.append('--time=' + str(worker_time_minutes))
         proc_args.append('--mem=' + str(worker_mem_mb))
 
-        if self.conf.worker_sbatch_args is not None:
-            proc_args.extend(shlex.split(self.conf.worker_sbatch_args))
-
-        if sbatch_args is not None:
-            proc_args.extend(shlex.split(sbatch_args))
+        proc_args.extend(combine_shell_args(self.conf.general_sbatch_args,
+                                            self.conf.worker_sbatch_args,
+                                            sbatch_args))
 
         mck_cmd = shlex.quote(self.conf.worker_mck_cmd)
 
