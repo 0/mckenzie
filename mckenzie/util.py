@@ -243,8 +243,9 @@ def humanize_datetime(dt, now):
 
 def parse_slurm_timedelta(s):
     # Input is of the form "days-hours:minutes:seconds", where we assume that
-    # each piece except the last is optional.
-    pieces = reversed(s.replace('-', ':').split(':'))
+    # each piece except the last is optional. Sometimes there may also be a
+    # ".microseconds" component, which we always remove.
+    pieces = reversed(s.split('.')[0].replace('-', ':').split(':'))
     multipliers = [60, 60, 24, 0]
 
     total = 0
