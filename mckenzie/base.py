@@ -134,6 +134,23 @@ class Instance(Agent):
 
 
 class Manager(Agent):
+    _registry = {}
+
+    PREFLIGHT_DISABLED = frozenset()
+
+    def __init_subclass__(cls, *, name, **kwargs):
+        super().__init_subclass__(**kwargs)
+
+        cls._registry[name] = cls
+
+    @classmethod
+    def all_managers(cls):
+        return cls._registry.values()
+
+    @classmethod
+    def get_manager(cls, name):
+        return cls._registry[name]
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 

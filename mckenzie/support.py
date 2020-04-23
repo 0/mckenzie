@@ -14,7 +14,9 @@ from .util import (cancel_slurm_job, check_proc, combine_shell_args,
 logger = logging.getLogger(__name__)
 
 
-class SupportManager(Manager):
+class SupportManager(Manager, name='support'):
+    PREFLIGHT_DISABLED = frozenset({'database_init', 'database_current'})
+
     # Path to support output files, relative to support directory.
     SUPPORT_OUTPUT_DIR = Path('support_output')
     # Support output file name template.
@@ -26,6 +28,32 @@ class SupportManager(Manager):
     END_SIGNAL_SECONDS = 300
     # 1.5 minutes
     INTERRUPT_WAIT_SECONDS = 90
+
+    @classmethod
+    def add_cmdline_parser(cls, p_sub):
+        # support
+        p_support = p_sub.add_parser('support', help='support job management')
+        p_support_sub = p_support.add_subparsers(dest='subcommand')
+
+        # support attach
+        p_support_attach = p_support_sub.add_parser('attach', help='attach to support job')
+        p_support_attach.add_argument('slurm_job_id', type=int, help='Slurm job ID of support job')
+
+        # support list
+        p_support_list = p_support_sub.add_parser('list', help='list support jobs')
+
+        # support quit
+        p_support_quit = p_support_sub.add_parser('quit', help='signal support jobs to quit')
+        p_support_quit.add_argument('--all', action='store_true', help='signal all support jobs')
+        p_support_quit.add_argument('slurm_job_id', nargs='*', type=int, help='Slurm job ID of support job')
+
+        # support spawn
+        p_support_spawn = p_support_sub.add_parser('spawn', help='spawn Slurm support job')
+        p_support_spawn.add_argument('--cpus', metavar='C', type=int, required=True, help='number of CPUs')
+        p_support_spawn.add_argument('--time-hr', metavar='T', type=float, required=True, help='time limit in hours')
+        p_support_spawn.add_argument('--mem-gb', metavar='M', type=float, required=True, help='amount of memory in GB')
+        p_support_spawn.add_argument('--sbatch-args', metavar='SA', help='additional arguments to pass to sbatch')
+        p_support_spawn.add_argument('--num', type=int, default=1, help='number of support jobs to spawn (default: 1)')
 
     def _support_output_file(self):
         # Replacement symbol for sbatch.
@@ -153,7 +181,7 @@ class SupportManager(Manager):
                 slurm_job_ids.add(int(slurm_job_id))
 
         for slurm_job_id in slurm_job_ids:
-            if self.mck.interrupted.is_set():
+            if self.mck.interrupted:
                 break
 
             logger.debug(f'Attempting to cancel Slurm job {slurm_job_id}.')
@@ -250,7 +278,7 @@ class SupportManager(Manager):
                 '''
 
         for _ in range(num):
-            if self.mck.interrupted.is_set():
+            if self.mck.interrupted:
                 break
 
             logger.debug('Spawning support job.')

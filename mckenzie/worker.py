@@ -492,7 +492,7 @@ class Worker(Instance):
         logger.debug('Left pool normally.')
 
 
-class WorkerManager(Manager):
+class WorkerManager(Manager, name='worker'):
     # Path to worker output files, relative to chdir.
     WORKER_OUTPUT_DIR = Path('worker_output')
     # Worker output file name template.
@@ -507,6 +507,48 @@ class WorkerManager(Manager):
 
     STATE_ORDER = ['cancelled', 'queued', 'running', 'running (?)', 'quitting',
                    'quitting (?)', 'failed', 'done']
+
+    @classmethod
+    def add_cmdline_parser(cls, p_sub):
+        # worker
+        p_worker = p_sub.add_parser('worker', help='worker management')
+        p_worker_sub = p_worker.add_subparsers(dest='subcommand')
+
+        # worker ack-failed
+        p_worker_ack_failed = p_worker_sub.add_parser('ack-failed', help='acknowledge all failed workers')
+
+        # worker clean
+        p_worker_clean = p_worker_sub.add_parser('clean', help='clean up dead workers')
+        p_worker_clean.add_argument('--state', metavar='S', help='only workers in state S')
+
+        # worker list
+        p_worker_list = p_worker_sub.add_parser('list', help='list workers')
+        p_worker_list.add_argument('--state', metavar='S', help='only workers in state S')
+
+        # worker list-queued
+        p_worker_list_queued = p_worker_sub.add_parser('list-queued', help='list queued workers')
+
+        # worker quit
+        p_worker_quit = p_worker_sub.add_parser('quit', help='signal worker job to quit')
+        p_worker_quit.add_argument('--abort', action='store_true', help='quit immediately, killing running tasks')
+        p_worker_quit.add_argument('--all', action='store_true', help='signal all worker jobs')
+        p_worker_quit.add_argument('--state', metavar='S', help='only workers in state S for "--all"')
+        p_worker_quit.add_argument('slurm_job_id', nargs='*', type=int, help='Slurm job ID of worker')
+
+        # worker run
+        p_worker_run = p_worker_sub.add_parser('run', help='run worker inside Slurm job')
+
+        # worker show
+        p_worker_show = p_worker_sub.add_parser('show', help='show worker details')
+        p_worker_show.add_argument('slurm_job_id', type=int, help='Slurm job ID of worker')
+
+        # worker spawn
+        p_worker_spawn = p_worker_sub.add_parser('spawn', help='spawn Slurm worker job')
+        p_worker_spawn.add_argument('--cpus', metavar='C', type=int, required=True, help='number of CPUs')
+        p_worker_spawn.add_argument('--time-hr', metavar='T', type=float, required=True, help='time limit in hours')
+        p_worker_spawn.add_argument('--mem-gb', metavar='M', type=float, required=True, help='amount of memory in GB')
+        p_worker_spawn.add_argument('--sbatch-args', metavar='SA', help='additional arguments to pass to sbatch')
+        p_worker_spawn.add_argument('--num', type=int, default=1, help='number of workers to spawn (default: 1)')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -608,7 +650,7 @@ class WorkerManager(Manager):
                     ''', (self._ws.rlookup('ws_failed'),))
 
         for slurm_job_id, in workers:
-            if self.mck.interrupted.is_set():
+            if self.mck.interrupted:
                 break
 
             logger.info(slurm_job_id)
@@ -630,7 +672,7 @@ class WorkerManager(Manager):
         ok_worker_ids = []
 
         while True:
-            if self.mck.interrupted.is_set():
+            if self.mck.interrupted:
                 break
 
             @self.db.tx
@@ -921,7 +963,7 @@ class WorkerManager(Manager):
                 slurm_job_ids.add(slurm_job_id)
 
         for slurm_job_id in slurm_job_ids:
-            if self.mck.interrupted.is_set():
+            if self.mck.interrupted:
                 break
 
             logger.debug(f'Attempting to cancel worker {slurm_job_id}.')
@@ -1172,7 +1214,7 @@ class WorkerManager(Manager):
                 '''
 
         for _ in range(num):
-            if self.mck.interrupted.is_set():
+            if self.mck.interrupted:
                 break
 
             logger.debug('Spawning worker job.')

@@ -4,14 +4,30 @@ import shlex
 import traceback
 
 from .base import Manager
-from .util import HandledException
+from .util import HandledException, without_sigint
 
 
 logger = logging.getLogger(__name__)
 
 
-class BatchManager(Manager):
+class BatchManager(Manager, name='batch'):
+    PREFLIGHT_DISABLED = frozenset({'database_init', 'database_current'})
+
     PROMPT = 'mck> '
+
+    @classmethod
+    def add_cmdline_parser(cls, p_sub):
+        # batch
+        p_batch = p_sub.add_parser('batch', help='batch command execution')
+        p_batch_sub = p_batch.add_subparsers(dest='subcommand')
+
+        # batch run
+        p_batch_run = p_batch_sub.add_parser('run', help='run commands from a file')
+        p_batch_run.add_argument('--progress', action='store_true', help='show progress')
+        p_batch_run.add_argument('path', nargs='*', help='path to file of commands')
+
+        # batch shell
+        p_batch_shell = p_batch_sub.add_parser('shell', help='run commands interactively')
 
     def summary(self, args):
         logger.info('No action specified.')
@@ -41,7 +57,7 @@ class BatchManager(Manager):
 
         try:
             for i, pre_line in enumerate(lines):
-                if self.mck.interrupted.is_set():
+                if self.mck.interrupted:
                     break
 
                 line = pre_line.rstrip()
@@ -104,7 +120,7 @@ class BatchManager(Manager):
 
         try:
             while True:
-                with self.mck.without_sigint():
+                with without_sigint():
                     try:
                         pre_line = input(self.PROMPT)
                     except EOFError:

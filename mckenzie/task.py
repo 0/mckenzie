@@ -91,7 +91,7 @@ class ClaimStack(ExitStack):
         self.claimed_ids.add(task_id)
 
 
-class TaskManager(Manager):
+class TaskManager(Manager, name='task'):
     STATE_ORDER = ['cancelled', 'held', 'waiting', 'ready', 'running',
                    'failed', 'done', 'synthesized', 'cleanable', 'cleaning',
                    'cleaned']
@@ -163,6 +163,84 @@ class TaskManager(Manager):
         return cls._run_cmd(conf.general_chdir, conf.task_unsynthesize_cmd,
                             task_name)
 
+    @classmethod
+    def add_cmdline_parser(cls, p_sub):
+        # task
+        p_task = p_sub.add_parser('task', help='task management')
+        p_task_sub = p_task.add_subparsers(dest='subcommand')
+
+        # task add
+        p_task_add = p_task_sub.add_parser('add', help='create a new task')
+        p_task_add.add_argument('--time-hr', metavar='T', type=float, required=True, help='time limit in hours')
+        p_task_add.add_argument('--mem-gb', metavar='M', type=float, required=True, help='memory limit in GB')
+        p_task_add.add_argument('--priority', metavar='P', type=int, default=0, help='priority (default: 0)')
+        p_task_add.add_argument('--depends-on', metavar='DEP', action='append', help='task DEP is a dependency')
+        p_task_add.add_argument('--soft-depends-on', metavar='DEP', action='append', help='task DEP is a soft dependency')
+        p_task_add.add_argument('name', help='task name')
+
+        # task cancel
+        p_task_cancel = p_task_sub.add_parser('cancel', help='change task state to "cancelled"')
+        p_task_cancel.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
+        p_task_cancel.add_argument('name', nargs='*', help='task name')
+
+        # task clean
+        p_task_clean = p_task_sub.add_parser('clean', help='run clean command for "cleanable" tasks')
+
+        # task cleanablize
+        p_task_cleanablize = p_task_sub.add_parser('cleanablize', help='change task state from "synthesized" to "cleanable"')
+        p_task_cleanablize.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
+        p_task_cleanablize.add_argument('name', nargs='*', help='task name')
+
+        # task hold
+        p_task_hold = p_task_sub.add_parser('hold', help='change task state to "held"')
+        p_task_hold.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
+        p_task_hold.add_argument('name', nargs='*', help='task name')
+
+        # task list
+        p_task_list = p_task_sub.add_parser('list', help='list tasks')
+        p_task_list.add_argument('--state', metavar='S', help='only tasks in state S')
+        p_task_list.add_argument('--name-pattern', metavar='P', help='only tasks with names matching the SQL LIKE pattern P')
+        p_task_list.add_argument('--allow-all', action='store_true', help='allow all tasks to be listed')
+
+        # task list-claimed
+        p_task_list_claimed = p_task_sub.add_parser('list-claimed', help='list claimed tasks')
+        p_task_list_claimed.add_argument('--state', metavar='S', help='only tasks in state S')
+        p_task_list_claimed.add_argument('--name-pattern', metavar='P', help='only tasks with names matching the SQL LIKE pattern P')
+        p_task_list_claimed.add_argument('--longer-than-hr', metavar='T', type=float, help='only tasks claimed for longer than T hours')
+
+        # task release
+        p_task_release = p_task_sub.add_parser('release', help='change "held" task state to "waiting"')
+        p_task_release.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
+        p_task_release.add_argument('name', nargs='*', help='task name')
+
+        # task rerun
+        p_task_rerun = p_task_sub.add_parser('rerun', help='rerun a task and all its dependents')
+        p_task_rerun.add_argument('name', help='task name')
+
+        # task reset-claimed
+        p_task_reset_claimed = p_task_sub.add_parser('reset-claimed', help='unclaim abandoned tasks')
+        p_task_reset_claimed.add_argument('name', nargs='*', help='task name')
+
+        # task reset-failed
+        p_task_reset_failed = p_task_sub.add_parser('reset-failed', help='reset all "failed" tasks to "waiting"')
+
+        # task show
+        p_task_show = p_task_sub.add_parser('show', help='show task details')
+        p_task_show.add_argument('name', help='task name')
+
+        # task synthesize
+        p_task_synthesize = p_task_sub.add_parser('synthesize', help='synthesize completed tasks')
+
+        # task uncancel
+        p_task_uncancel = p_task_sub.add_parser('uncancel', help='change "cancelled" task state to "waiting"')
+        p_task_uncancel.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
+        p_task_uncancel.add_argument('name', nargs='*', help='task name')
+
+        # task uncleanablize
+        p_task_uncleanablize = p_task_sub.add_parser('uncleanablize', help='change task state from "cleanable" to "synthesized"')
+        p_task_uncleanablize.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
+        p_task_uncleanablize.add_argument('name', nargs='*', help='task name')
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -201,7 +279,7 @@ class TaskManager(Manager):
                              name_pattern, names):
         task_names = names.copy()
 
-        while not self.mck.interrupted.is_set():
+        while not self.mck.interrupted:
             logger.debug('Selecting next task.')
 
             with ClaimStack(self) as cs:
@@ -553,7 +631,7 @@ class TaskManager(Manager):
         # tasks, which are more difficult to handle.
         searching_for_cleaning = True
 
-        while not self.mck.interrupted.is_set():
+        while not self.mck.interrupted:
             logger.debug('Selecting next task.')
 
             with ClaimStack(self) as cs:
@@ -1045,7 +1123,7 @@ class TaskManager(Manager):
         names = args.name
 
         for task_name in names:
-            if self.mck.interrupted.is_set():
+            if self.mck.interrupted:
                 break
 
             logger.debug(f'Resetting claim on "{task_name}".')
@@ -1072,7 +1150,7 @@ class TaskManager(Manager):
             logger.info(task_name)
 
     def reset_failed(self, args):
-        while not self.mck.interrupted.is_set():
+        while not self.mck.interrupted:
             logger.debug('Selecting next task.')
 
             @self.db.tx
@@ -1302,7 +1380,7 @@ class TaskManager(Manager):
             print('Not claimed.')
 
     def synthesize(self, args):
-        while not self.mck.interrupted.is_set():
+        while not self.mck.interrupted:
             logger.debug('Selecting next task.')
 
             @self.db.tx

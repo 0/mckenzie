@@ -318,7 +318,9 @@ class Database:
         return True
 
 
-class DatabaseManager(Manager):
+class DatabaseManager(Manager, name='database'):
+    PREFLIGHT_DISABLED = frozenset({'database_init', 'database_current'})
+
     # Path to database output files, relative to database directory.
     DATABASE_OUTPUT_DIR = Path('database_output')
     # Database output file name template.
@@ -334,6 +336,40 @@ class DatabaseManager(Manager):
         d = pkg_resources.resource_filename(__name__, f'schema/{typ}')
 
         return sorted(os.path.join(d, name) for name in os.listdir(d))
+
+    @classmethod
+    def add_cmdline_parser(cls, p_sub):
+        # database
+        p_database = p_sub.add_parser('database', help='database management')
+        p_database_sub = p_database.add_subparsers(dest='subcommand')
+
+        # database backup
+        p_database_backup = p_database_sub.add_parser('backup', help='back up database')
+
+        # database client
+        p_database_client = p_database_sub.add_parser('client', help='connect to database')
+
+        # database list
+        p_database_list = p_database_sub.add_parser('list', help='list database jobs')
+
+        # database load-schema
+        p_database_load_schema = p_database_sub.add_parser('load-schema', help='load schema')
+
+        # database quit
+        p_database_quit = p_database_sub.add_parser('quit', help='signal database jobs to quit')
+        p_database_quit.add_argument('--current', action='store_true', help='signal currently active database')
+        p_database_quit.add_argument('--all', action='store_true', help='signal all database jobs')
+        p_database_quit.add_argument('slurm_job_id', nargs='*', type=int, help='Slurm job ID of database')
+
+        # database run
+        p_database_run = p_database_sub.add_parser('run', help='run database')
+
+        # database spawn
+        p_database_spawn = p_database_sub.add_parser('spawn', help='spawn Slurm database job')
+        p_database_spawn.add_argument('--cpus', metavar='C', type=int, required=True, help='number of CPUs')
+        p_database_spawn.add_argument('--time-hr', metavar='T', type=float, required=True, help='time limit in hours')
+        p_database_spawn.add_argument('--mem-gb', metavar='M', type=float, required=True, help='amount of memory in GB')
+        p_database_spawn.add_argument('--sbatch-args', metavar='SA', help='additional arguments to pass to sbatch')
 
     def _database_output_file(self):
         # Replacement symbol for sbatch.
@@ -548,7 +584,7 @@ class DatabaseManager(Manager):
                 slurm_job_ids.add(int(slurm_job_id))
 
         for slurm_job_id in slurm_job_ids:
-            if self.mck.interrupted.is_set():
+            if self.mck.interrupted:
                 break
 
             logger.debug(f'Attempting to cancel Slurm job {slurm_job_id}.')

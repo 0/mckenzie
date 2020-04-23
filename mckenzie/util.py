@@ -3,7 +3,9 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 import fcntl
 import shlex
+import signal
 import subprocess
+from threading import Event
 
 
 class HandledException(Exception):
@@ -392,6 +394,34 @@ def flock(path):
             yield
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def event_on_sigint(log):
+    event = Event()
+
+    def _interrupt(signum=None, frame=None):
+        log('Interrupted.')
+        event.set()
+        # If we recieve the signal again, abort in the usual fashion.
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+
+    signal.signal(signal.SIGINT, _interrupt)
+
+    return event
+
+
+@contextmanager
+def without_sigint():
+    # Store the real handler and temporarily install the one that raises
+    # KeyboardInterrupt.
+    real_handler = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+
+    try:
+        yield
+    finally:
+        # Put back the real handler.
+        signal.signal(signal.SIGINT, real_handler)
 
 
 class DirectedAcyclicGraphIterator:
