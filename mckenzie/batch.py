@@ -3,6 +3,7 @@ from pathlib import Path
 import shlex
 import traceback
 
+from .arguments import argparsable, argument, description
 from .base import Manager
 from .util import HandledException, without_sigint
 
@@ -10,28 +11,18 @@ from .util import HandledException, without_sigint
 logger = logging.getLogger(__name__)
 
 
+@argparsable('batch command execution')
 class BatchManager(Manager, name='batch'):
     PREFLIGHT_DISABLED = frozenset({'database_init', 'database_current'})
 
     PROMPT = 'mck> '
 
-    @classmethod
-    def add_cmdline_parser(cls, p_sub):
-        # batch
-        p_batch = p_sub.add_parser('batch', help='batch command execution')
-        p_batch_sub = p_batch.add_subparsers(dest='subcommand')
-
-        # batch run
-        p_batch_run = p_batch_sub.add_parser('run', help='run commands from a file')
-        p_batch_run.add_argument('--progress', action='store_true', help='show progress')
-        p_batch_run.add_argument('path', nargs='*', help='path to file of commands')
-
-        # batch shell
-        p_batch_shell = p_batch_sub.add_parser('shell', help='run commands interactively')
-
     def summary(self, args):
         logger.info('No action specified.')
 
+    @description('run commands from a file')
+    @argument('--progress', action='store_true', help='show progress')
+    @argument('path', nargs='*', help='path to file of commands')
     def run(self, args):
         progress = args.progress
         paths = args.path
@@ -71,6 +62,7 @@ class BatchManager(Manager, name='batch'):
             if progress:
                 print()
 
+    @description('run commands interactively')
     def shell(self, args):
         logger.debug('Starting batch shell.')
         logger.info('Use "exit" or ^D to quit.')

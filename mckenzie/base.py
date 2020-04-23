@@ -143,6 +143,8 @@ class Manager(Agent):
 
         cls._registry[name] = cls
 
+        cls.name = name
+
     @classmethod
     def all_managers(cls):
         return cls._registry.values()
@@ -150,6 +152,17 @@ class Manager(Agent):
     @classmethod
     def get_manager(cls, name):
         return cls._registry[name]
+
+    @classmethod
+    def add_cmdline_parser(cls, p_sub):
+        p_mgr = p_sub.add_parser(cls.name, help=cls._argparse_desc)
+        p_mgr_sub = p_mgr.add_subparsers(dest='subcommand')
+
+        for name, (desc, args) in cls._argparse_subcommands.items():
+            p_mgr_cmd = p_mgr_sub.add_parser(name, help=desc)
+
+            for args, kwargs in args:
+                p_mgr_cmd.add_argument(*args, **kwargs)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

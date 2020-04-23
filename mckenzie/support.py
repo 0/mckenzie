@@ -6,6 +6,7 @@ from pathlib import Path
 import shlex
 import subprocess
 
+from .arguments import argparsable, argument, description
 from .base import Manager
 from .util import (cancel_slurm_job, check_proc, combine_shell_args,
                    humanize_datetime, parse_slurm_timedelta)
@@ -14,6 +15,7 @@ from .util import (cancel_slurm_job, check_proc, combine_shell_args,
 logger = logging.getLogger(__name__)
 
 
+@argparsable('support job management')
 class SupportManager(Manager, name='support'):
     PREFLIGHT_DISABLED = frozenset({'database_init', 'database_current'})
 
@@ -29,32 +31,6 @@ class SupportManager(Manager, name='support'):
     # 1.5 minutes
     INTERRUPT_WAIT_SECONDS = 90
 
-    @classmethod
-    def add_cmdline_parser(cls, p_sub):
-        # support
-        p_support = p_sub.add_parser('support', help='support job management')
-        p_support_sub = p_support.add_subparsers(dest='subcommand')
-
-        # support attach
-        p_support_attach = p_support_sub.add_parser('attach', help='attach to support job')
-        p_support_attach.add_argument('slurm_job_id', type=int, help='Slurm job ID of support job')
-
-        # support list
-        p_support_list = p_support_sub.add_parser('list', help='list support jobs')
-
-        # support quit
-        p_support_quit = p_support_sub.add_parser('quit', help='signal support jobs to quit')
-        p_support_quit.add_argument('--all', action='store_true', help='signal all support jobs')
-        p_support_quit.add_argument('slurm_job_id', nargs='*', type=int, help='Slurm job ID of support job')
-
-        # support spawn
-        p_support_spawn = p_support_sub.add_parser('spawn', help='spawn Slurm support job')
-        p_support_spawn.add_argument('--cpus', metavar='C', type=int, required=True, help='number of CPUs')
-        p_support_spawn.add_argument('--time-hr', metavar='T', type=float, required=True, help='time limit in hours')
-        p_support_spawn.add_argument('--mem-gb', metavar='M', type=float, required=True, help='amount of memory in GB')
-        p_support_spawn.add_argument('--sbatch-args', metavar='SA', help='additional arguments to pass to sbatch')
-        p_support_spawn.add_argument('--num', type=int, default=1, help='number of support jobs to spawn (default: 1)')
-
     def _support_output_file(self):
         # Replacement symbol for sbatch.
         slurm_job_id = '%j'
@@ -66,6 +42,8 @@ class SupportManager(Manager, name='support'):
     def summary(self, args):
         logger.info('No action specified.')
 
+    @description('attach to support job')
+    @argument('slurm_job_id', type=int, help='Slurm job ID of support job')
     def attach(self, args):
         slurm_job_id = args.slurm_job_id
 
@@ -101,6 +79,7 @@ class SupportManager(Manager, name='support'):
 
         os.execvp('ssh', proc_args)
 
+    @description('list support jobs')
     def list(self, args):
         columns = ['%A', '%t', '%R', '%P', '%C', '%l', '%m', '%S', '%e']
         format_str = '\t'.join(columns)
@@ -163,6 +142,9 @@ class SupportManager(Manager, name='support'):
                           'Mem (GB)', 'Start', 'End'],
                          sorted_data)
 
+    @description('signal support jobs to quit')
+    @argument('--all', action='store_true', help='signal all support jobs')
+    @argument('slurm_job_id', nargs='*', type=int, help='Slurm job ID of support job')
     def quit(self, args):
         all_jobs = args.all
         slurm_job_ids = set(args.slurm_job_id)
@@ -197,6 +179,12 @@ class SupportManager(Manager, name='support'):
             if cancel_success:
                 logger.info(slurm_job_id)
 
+    @description('spawn Slurm support job')
+    @argument('--cpus', metavar='C', type=int, required=True, help='number of CPUs')
+    @argument('--time-hr', metavar='T', type=float, required=True, help='time limit in hours')
+    @argument('--mem-gb', metavar='M', type=float, required=True, help='amount of memory in GB')
+    @argument('--sbatch-args', metavar='SA', help='additional arguments to pass to sbatch')
+    @argument('--num', type=int, default=1, help='number of support jobs to spawn (default: 1)')
     def spawn(self, args):
         support_cpus = args.cpus
         support_time_hours = args.time_hr

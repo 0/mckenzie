@@ -5,6 +5,7 @@ import logging
 import os
 import subprocess
 
+from .arguments import argparsable, argument, description
 from .base import (DatabaseNoteView, DatabaseReasonView, DatabaseStateView,
                    Manager)
 from .database import AdvisoryKey, CheckViolation, RaisedException
@@ -91,6 +92,7 @@ class ClaimStack(ExitStack):
         self.claimed_ids.add(task_id)
 
 
+@argparsable('task management')
 class TaskManager(Manager, name='task'):
     STATE_ORDER = ['cancelled', 'held', 'waiting', 'ready', 'running',
                    'failed', 'done', 'synthesized', 'cleanable', 'cleaning',
@@ -162,84 +164,6 @@ class TaskManager(Manager, name='task'):
     def _unsynthesize(cls, conf, task_name):
         return cls._run_cmd(conf.general_chdir, conf.task_unsynthesize_cmd,
                             task_name)
-
-    @classmethod
-    def add_cmdline_parser(cls, p_sub):
-        # task
-        p_task = p_sub.add_parser('task', help='task management')
-        p_task_sub = p_task.add_subparsers(dest='subcommand')
-
-        # task add
-        p_task_add = p_task_sub.add_parser('add', help='create a new task')
-        p_task_add.add_argument('--time-hr', metavar='T', type=float, required=True, help='time limit in hours')
-        p_task_add.add_argument('--mem-gb', metavar='M', type=float, required=True, help='memory limit in GB')
-        p_task_add.add_argument('--priority', metavar='P', type=int, default=0, help='priority (default: 0)')
-        p_task_add.add_argument('--depends-on', metavar='DEP', action='append', help='task DEP is a dependency')
-        p_task_add.add_argument('--soft-depends-on', metavar='DEP', action='append', help='task DEP is a soft dependency')
-        p_task_add.add_argument('name', help='task name')
-
-        # task cancel
-        p_task_cancel = p_task_sub.add_parser('cancel', help='change task state to "cancelled"')
-        p_task_cancel.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
-        p_task_cancel.add_argument('name', nargs='*', help='task name')
-
-        # task clean
-        p_task_clean = p_task_sub.add_parser('clean', help='run clean command for "cleanable" tasks')
-
-        # task cleanablize
-        p_task_cleanablize = p_task_sub.add_parser('cleanablize', help='change task state from "synthesized" to "cleanable"')
-        p_task_cleanablize.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
-        p_task_cleanablize.add_argument('name', nargs='*', help='task name')
-
-        # task hold
-        p_task_hold = p_task_sub.add_parser('hold', help='change task state to "held"')
-        p_task_hold.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
-        p_task_hold.add_argument('name', nargs='*', help='task name')
-
-        # task list
-        p_task_list = p_task_sub.add_parser('list', help='list tasks')
-        p_task_list.add_argument('--state', metavar='S', help='only tasks in state S')
-        p_task_list.add_argument('--name-pattern', metavar='P', help='only tasks with names matching the SQL LIKE pattern P')
-        p_task_list.add_argument('--allow-all', action='store_true', help='allow all tasks to be listed')
-
-        # task list-claimed
-        p_task_list_claimed = p_task_sub.add_parser('list-claimed', help='list claimed tasks')
-        p_task_list_claimed.add_argument('--state', metavar='S', help='only tasks in state S')
-        p_task_list_claimed.add_argument('--name-pattern', metavar='P', help='only tasks with names matching the SQL LIKE pattern P')
-        p_task_list_claimed.add_argument('--longer-than-hr', metavar='T', type=float, help='only tasks claimed for longer than T hours')
-
-        # task release
-        p_task_release = p_task_sub.add_parser('release', help='change "held" task state to "waiting"')
-        p_task_release.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
-        p_task_release.add_argument('name', nargs='*', help='task name')
-
-        # task rerun
-        p_task_rerun = p_task_sub.add_parser('rerun', help='rerun a task and all its dependents')
-        p_task_rerun.add_argument('name', help='task name')
-
-        # task reset-claimed
-        p_task_reset_claimed = p_task_sub.add_parser('reset-claimed', help='unclaim abandoned tasks')
-        p_task_reset_claimed.add_argument('name', nargs='*', help='task name')
-
-        # task reset-failed
-        p_task_reset_failed = p_task_sub.add_parser('reset-failed', help='reset all "failed" tasks to "waiting"')
-
-        # task show
-        p_task_show = p_task_sub.add_parser('show', help='show task details')
-        p_task_show.add_argument('name', help='task name')
-
-        # task synthesize
-        p_task_synthesize = p_task_sub.add_parser('synthesize', help='synthesize completed tasks')
-
-        # task uncancel
-        p_task_uncancel = p_task_sub.add_parser('uncancel', help='change "cancelled" task state to "waiting"')
-        p_task_uncancel.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
-        p_task_uncancel.add_argument('name', nargs='*', help='task name')
-
-        # task uncleanablize
-        p_task_uncleanablize = p_task_sub.add_parser('uncleanablize', help='change task state from "cleanable" to "synthesized"')
-        p_task_uncleanablize.add_argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
-        p_task_uncleanablize.add_argument('name', nargs='*', help='task name')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -520,6 +444,13 @@ class TaskManager(Manager, name='task'):
         self.print_table(['State', 'Count', 'Total time'], sorted_data,
                          total=('Total', (1, 2), (0, timedelta())))
 
+    @description('create a new task')
+    @argument('--time-hr', metavar='T', type=float, required=True, help='time limit in hours')
+    @argument('--mem-gb', metavar='M', type=float, required=True, help='memory limit in GB')
+    @argument('--priority', metavar='P', type=int, default=0, help='priority (default: 0)')
+    @argument('--depends-on', metavar='DEP', action='append', help='task DEP is a dependency')
+    @argument('--soft-depends-on', metavar='DEP', action='append', help='task DEP is a soft dependency')
+    @argument('name', help='task name')
     def add(self, args):
         time_limit = timedelta(hours=args.time_hr)
         mem_limit_mb = args.mem_gb * 1024
@@ -616,6 +547,9 @@ class TaskManager(Manager, name='task'):
 
             self._unclaim(tx, task_id, self.ident)
 
+    @description('change task state to "cancelled"')
+    @argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
+    @argument('name', nargs='*', help='task name')
     def cancel(self, args):
         name_pattern = args.name_pattern
         names = args.name
@@ -625,6 +559,7 @@ class TaskManager(Manager, name='task'):
                                   self._tr.rlookup('tr_task_cancel'),
                                   name_pattern, names)
 
+    @description('run clean command for "cleanable" tasks')
     def clean(self, args):
         # We start by finishing the cleaning process for tasks that were left
         # in "cleaning". Once there are no more, we move on to "cleanable"
@@ -821,6 +756,9 @@ class TaskManager(Manager, name='task'):
 
         logger.debug('Exited cleanly.')
 
+    @description('change task state from "synthesized" to "cleanable"')
+    @argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
+    @argument('name', nargs='*', help='task name')
     def cleanablize(self, args):
         name_pattern = args.name_pattern
         names = args.name
@@ -830,6 +768,9 @@ class TaskManager(Manager, name='task'):
                                   self._tr.rlookup('tr_task_cleanablize'),
                                   name_pattern, names)
 
+    @description('change task state to "held"')
+    @argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
+    @argument('name', nargs='*', help='task name')
     def hold(self, args):
         name_pattern = args.name_pattern
         names = args.name
@@ -839,6 +780,10 @@ class TaskManager(Manager, name='task'):
                                   self._tr.rlookup('tr_task_hold'),
                                   name_pattern, names)
 
+    @description('list tasks')
+    @argument('--state', metavar='S', help='only tasks in state S')
+    @argument('--name-pattern', metavar='P', help='only tasks with names matching the SQL LIKE pattern P')
+    @argument('--allow-all', action='store_true', help='allow all tasks to be listed')
     def list(self, args):
         state_name = args.state
         name_pattern = args.name_pattern
@@ -894,6 +839,10 @@ class TaskManager(Manager, name='task'):
                           'Mem (MB)'],
                          task_data)
 
+    @description('list claimed tasks')
+    @argument('--state', metavar='S', help='only tasks in state S')
+    @argument('--name-pattern', metavar='P', help='only tasks with names matching the SQL LIKE pattern P')
+    @argument('--longer-than-hr', metavar='T', type=float, help='only tasks claimed for longer than T hours')
     def list_claimed(self, args):
         state_name = args.state
         name_pattern = args.name_pattern
@@ -940,6 +889,9 @@ class TaskManager(Manager, name='task'):
         self.print_table(['Name', 'State', 'Claimed by', 'Since', 'For'],
                          task_data)
 
+    @description('change "held" task state to "waiting"')
+    @argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
+    @argument('name', nargs='*', help='task name')
     def release(self, args):
         name_pattern = args.name_pattern
         names = args.name
@@ -949,6 +901,8 @@ class TaskManager(Manager, name='task'):
                                   self._tr.rlookup('tr_task_release'),
                                   name_pattern, names)
 
+    @description('rerun a task and all its dependents')
+    @argument('name', help='task name')
     def rerun(self, args):
         task_name = args.name
 
@@ -1119,6 +1073,8 @@ class TaskManager(Manager, name='task'):
                     tx.advisory_unlock(AdvisoryKey.TASK_DEPENDENCY_ACCESS,
                                        locked_dependency_keys, shared=True)
 
+    @description('unclaim abandoned tasks')
+    @argument('name', nargs='*', help='task name')
     def reset_claimed(self, args):
         names = args.name
 
@@ -1149,6 +1105,7 @@ class TaskManager(Manager, name='task'):
 
             logger.info(task_name)
 
+    @description('reset all "failed" tasks to "waiting"')
     def reset_failed(self, args):
         while not self.mck.interrupted:
             logger.debug('Selecting next task.')
@@ -1206,6 +1163,8 @@ class TaskManager(Manager, name='task'):
 
         logger.debug('Exited cleanly.')
 
+    @description('show task details')
+    @argument('name', help='task name')
     def show(self, args):
         name = args.name
 
@@ -1379,6 +1338,7 @@ class TaskManager(Manager, name='task'):
         else:
             print('Not claimed.')
 
+    @description('synthesize completed tasks')
     def synthesize(self, args):
         while not self.mck.interrupted:
             logger.debug('Selecting next task.')
@@ -1436,6 +1396,9 @@ class TaskManager(Manager, name='task'):
 
         logger.debug('Exited cleanly.')
 
+    @description('change "cancelled" task state to "waiting"')
+    @argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
+    @argument('name', nargs='*', help='task name')
     def uncancel(self, args):
         name_pattern = args.name_pattern
         names = args.name
@@ -1445,6 +1408,9 @@ class TaskManager(Manager, name='task'):
                                   self._tr.rlookup('tr_task_uncancel'),
                                   name_pattern, names)
 
+    @description('change task state from "cleanable" to "synthesized"')
+    @argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
+    @argument('name', nargs='*', help='task name')
     def uncleanablize(self, args):
         name_pattern = args.name_pattern
         names = args.name

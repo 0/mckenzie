@@ -10,6 +10,7 @@ import subprocess
 import threading
 from time import sleep
 
+from .arguments import argparsable, argument, description
 from .base import DatabaseReasonView, DatabaseStateView, Instance, Manager
 from .task import TaskManager, TaskReason, TaskState
 from .util import (HandledException, cancel_slurm_job, check_proc,
@@ -492,6 +493,7 @@ class Worker(Instance):
         logger.debug('Left pool normally.')
 
 
+@argparsable('worker management')
 class WorkerManager(Manager, name='worker'):
     # Path to worker output files, relative to chdir.
     WORKER_OUTPUT_DIR = Path('worker_output')
@@ -507,48 +509,6 @@ class WorkerManager(Manager, name='worker'):
 
     STATE_ORDER = ['cancelled', 'queued', 'running', 'running (?)', 'quitting',
                    'quitting (?)', 'failed', 'done']
-
-    @classmethod
-    def add_cmdline_parser(cls, p_sub):
-        # worker
-        p_worker = p_sub.add_parser('worker', help='worker management')
-        p_worker_sub = p_worker.add_subparsers(dest='subcommand')
-
-        # worker ack-failed
-        p_worker_ack_failed = p_worker_sub.add_parser('ack-failed', help='acknowledge all failed workers')
-
-        # worker clean
-        p_worker_clean = p_worker_sub.add_parser('clean', help='clean up dead workers')
-        p_worker_clean.add_argument('--state', metavar='S', help='only workers in state S')
-
-        # worker list
-        p_worker_list = p_worker_sub.add_parser('list', help='list workers')
-        p_worker_list.add_argument('--state', metavar='S', help='only workers in state S')
-
-        # worker list-queued
-        p_worker_list_queued = p_worker_sub.add_parser('list-queued', help='list queued workers')
-
-        # worker quit
-        p_worker_quit = p_worker_sub.add_parser('quit', help='signal worker job to quit')
-        p_worker_quit.add_argument('--abort', action='store_true', help='quit immediately, killing running tasks')
-        p_worker_quit.add_argument('--all', action='store_true', help='signal all worker jobs')
-        p_worker_quit.add_argument('--state', metavar='S', help='only workers in state S for "--all"')
-        p_worker_quit.add_argument('slurm_job_id', nargs='*', type=int, help='Slurm job ID of worker')
-
-        # worker run
-        p_worker_run = p_worker_sub.add_parser('run', help='run worker inside Slurm job')
-
-        # worker show
-        p_worker_show = p_worker_sub.add_parser('show', help='show worker details')
-        p_worker_show.add_argument('slurm_job_id', type=int, help='Slurm job ID of worker')
-
-        # worker spawn
-        p_worker_spawn = p_worker_sub.add_parser('spawn', help='spawn Slurm worker job')
-        p_worker_spawn.add_argument('--cpus', metavar='C', type=int, required=True, help='number of CPUs')
-        p_worker_spawn.add_argument('--time-hr', metavar='T', type=float, required=True, help='time limit in hours')
-        p_worker_spawn.add_argument('--mem-gb', metavar='M', type=float, required=True, help='amount of memory in GB')
-        p_worker_spawn.add_argument('--sbatch-args', metavar='SA', help='additional arguments to pass to sbatch')
-        p_worker_spawn.add_argument('--num', type=int, default=1, help='number of workers to spawn (default: 1)')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -640,6 +600,7 @@ class WorkerManager(Manager, name='worker'):
                          sorted_data,
                          total=('Total', (1, 2, 3), (0, 0, timedelta())))
 
+    @description('acknowledge all failed workers')
     def ack_failed(self, args):
         @self.db.tx
         def workers(tx):
@@ -664,6 +625,8 @@ class WorkerManager(Manager, name='worker'):
                         ''', (slurm_job_id, self._ws.rlookup('ws_done'),
                               self._wr.rlookup('wr_worker_ack_failed')))
 
+    @description('clean up dead workers')
+    @argument('--state', metavar='S', help='only workers in state S')
     def clean(self, args):
         state_name = args.state
 
@@ -794,6 +757,8 @@ class WorkerManager(Manager, name='worker'):
             for task_name in task_names:
                 logger.info(f' {task_name}')
 
+    @description('list workers')
+    @argument('--state', metavar='S', help='only workers in state S')
     def list(self, args):
         state_name = args.state
 
@@ -894,6 +859,7 @@ class WorkerManager(Manager, name='worker'):
                           ('Tasks (R/C/%/T)', 4), ('Mem (GB;U/T/%)', 3)],
                          worker_data)
 
+    @description('list queued workers')
     def list_queued(self, args):
         @self.db.tx
         def workers(tx):
@@ -928,6 +894,11 @@ class WorkerManager(Manager, name='worker'):
                           'Most recent start'],
                          worker_data)
 
+    @description('signal worker job to quit')
+    @argument('--abort', action='store_true', help='quit immediately, killing running tasks')
+    @argument('--all', action='store_true', help='signal all worker jobs')
+    @argument('--state', metavar='S', help='only workers in state S for "--all"')
+    @argument('slurm_job_id', nargs='*', type=int, help='Slurm job ID of worker')
     def quit(self, args):
         abort = args.abort
         all_workers = args.all
@@ -995,6 +966,7 @@ class WorkerManager(Manager, name='worker'):
                                       self._ws.rlookup('ws_cancelled'),
                                       self._wr.rlookup('wr_worker_quit_cancelled')))
 
+    @description('run worker inside Slurm job')
     def run(self, args):
         try:
             slurm_job_id = int(os.getenv('SLURM_JOB_ID'))
@@ -1090,6 +1062,8 @@ class WorkerManager(Manager, name='worker'):
                         VALUES (%s, %s, %s)
                         ''', (slurm_job_id, state_id, reason_id))
 
+    @description('show worker details')
+    @argument('slurm_job_id', type=int, help='Slurm job ID of worker')
     def show(self, args):
         slurm_job_id = args.slurm_job_id
 
@@ -1165,6 +1139,12 @@ class WorkerManager(Manager, name='worker'):
             for line in lines:
                 print(line.strip())
 
+    @description('spawn Slurm worker job')
+    @argument('--cpus', metavar='C', type=int, required=True, help='number of CPUs')
+    @argument('--time-hr', metavar='T', type=float, required=True, help='time limit in hours')
+    @argument('--mem-gb', metavar='M', type=float, required=True, help='amount of memory in GB')
+    @argument('--sbatch-args', metavar='SA', help='additional arguments to pass to sbatch')
+    @argument('--num', type=int, default=1, help='number of workers to spawn (default: 1)')
     def spawn(self, args):
         worker_cpus = args.cpus
         worker_time_hours = args.time_hr

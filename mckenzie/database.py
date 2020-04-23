@@ -13,6 +13,7 @@ import pkg_resources
 import psycopg2
 from psycopg2 import errorcodes
 
+from .arguments import argparsable, argument, description
 from .base import Manager
 from .util import (HandledException, cancel_slurm_job, check_proc,
                    check_squeue, combine_shell_args, flock, humanize_datetime,
@@ -318,6 +319,7 @@ class Database:
         return True
 
 
+@argparsable('database management')
 class DatabaseManager(Manager, name='database'):
     PREFLIGHT_DISABLED = frozenset({'database_init', 'database_current'})
 
@@ -337,40 +339,6 @@ class DatabaseManager(Manager, name='database'):
 
         return sorted(os.path.join(d, name) for name in os.listdir(d))
 
-    @classmethod
-    def add_cmdline_parser(cls, p_sub):
-        # database
-        p_database = p_sub.add_parser('database', help='database management')
-        p_database_sub = p_database.add_subparsers(dest='subcommand')
-
-        # database backup
-        p_database_backup = p_database_sub.add_parser('backup', help='back up database')
-
-        # database client
-        p_database_client = p_database_sub.add_parser('client', help='connect to database')
-
-        # database list
-        p_database_list = p_database_sub.add_parser('list', help='list database jobs')
-
-        # database load-schema
-        p_database_load_schema = p_database_sub.add_parser('load-schema', help='load schema')
-
-        # database quit
-        p_database_quit = p_database_sub.add_parser('quit', help='signal database jobs to quit')
-        p_database_quit.add_argument('--current', action='store_true', help='signal currently active database')
-        p_database_quit.add_argument('--all', action='store_true', help='signal all database jobs')
-        p_database_quit.add_argument('slurm_job_id', nargs='*', type=int, help='Slurm job ID of database')
-
-        # database run
-        p_database_run = p_database_sub.add_parser('run', help='run database')
-
-        # database spawn
-        p_database_spawn = p_database_sub.add_parser('spawn', help='spawn Slurm database job')
-        p_database_spawn.add_argument('--cpus', metavar='C', type=int, required=True, help='number of CPUs')
-        p_database_spawn.add_argument('--time-hr', metavar='T', type=float, required=True, help='time limit in hours')
-        p_database_spawn.add_argument('--mem-gb', metavar='M', type=float, required=True, help='amount of memory in GB')
-        p_database_spawn.add_argument('--sbatch-args', metavar='SA', help='additional arguments to pass to sbatch')
-
     def _database_output_file(self):
         # Replacement symbol for sbatch.
         slurm_job_id = '%j'
@@ -389,6 +357,7 @@ class DatabaseManager(Manager, name='database'):
         logger.info(f'Database "{self.db.dbname}" at '
                     f'{self.db.dbhost}:{self.db.dbport} is OK.')
 
+    @description('back up database')
     def backup(self, args):
         if not self.db.is_initialized(log=logger.error):
             return
@@ -422,6 +391,7 @@ class DatabaseManager(Manager, name='database'):
 
         logger.debug('Backup completed.')
 
+    @description('connect to database')
     def client(self, args):
         if not self.db.is_initialized(log=logger.error):
             return
@@ -439,6 +409,7 @@ class DatabaseManager(Manager, name='database'):
 
         os.execvpe('psql', proc_args, {**os.environ, **proc_env})
 
+    @description('list database jobs')
     def list(self, args):
         columns = ['%A', '%t', '%R', '%P', '%C', '%l', '%m', '%S', '%e']
         format_str = '\t'.join(columns)
@@ -501,6 +472,7 @@ class DatabaseManager(Manager, name='database'):
                           'Mem (GB)', 'Start', 'End'],
                          sorted_data)
 
+    @description('load schema')
     def load_schema(self, args):
         if not self.db.is_initialized(log=logger.error):
             return
@@ -555,6 +527,10 @@ class DatabaseManager(Manager, name='database'):
 
         logger.info('Schema loaded successfully.')
 
+    @description('signal database jobs to quit')
+    @argument('--current', action='store_true', help='signal currently active database')
+    @argument('--all', action='store_true', help='signal all database jobs')
+    @argument('slurm_job_id', nargs='*', type=int, help='Slurm job ID of database')
     def quit(self, args):
         current = args.current
         all_databases = args.all
@@ -600,6 +576,7 @@ class DatabaseManager(Manager, name='database'):
             if cancel_success:
                 logger.info(slurm_job_id)
 
+    @description('run database')
     def run(self, args):
         try:
             slurm_job_id = int(os.getenv('SLURM_JOB_ID'))
@@ -666,6 +643,11 @@ class DatabaseManager(Manager, name='database'):
         os.execlp('postgres', 'postgres', '-D',
                   self.db.dbpath / 'pgdata')
 
+    @description('spawn Slurm database job')
+    @argument('--cpus', metavar='C', type=int, required=True, help='number of CPUs')
+    @argument('--time-hr', metavar='T', type=float, required=True, help='time limit in hours')
+    @argument('--mem-gb', metavar='M', type=float, required=True, help='amount of memory in GB')
+    @argument('--sbatch-args', metavar='SA', help='additional arguments to pass to sbatch')
     def spawn(self, args):
         database_cpus = args.cpus
         database_time_hours = args.time_hr
