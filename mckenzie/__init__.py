@@ -116,7 +116,7 @@ class McKenzie:
         self.unsafe = True if unsafe else self.conf.general_unsafe
         self.colorizer = Colorizer(use_colors)
 
-        self._interrupt_event = event_on_sigint(logger.debug)
+        self._reset_interrupt()
 
     def _preflight(self, *, database_init=True, database_current=True):
         if self.unsafe:
@@ -133,6 +133,9 @@ class McKenzie:
                 return False
 
         return True
+
+    def _reset_interrupt(self):
+        self._interrupt_event = event_on_sigint(logger.debug)
 
     @property
     def interrupted(self):

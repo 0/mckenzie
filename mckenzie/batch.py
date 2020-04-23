@@ -146,6 +146,8 @@ class BatchManager(Manager, name='batch'):
                 except SystemExit:
                     continue
 
+                self.mck._reset_interrupt()
+
                 try:
                     self.mck.call_manager(batch_args)
                 except HandledException:
