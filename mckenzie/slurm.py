@@ -1,9 +1,10 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from math import ceil
 import os
 import subprocess
 
-from .util import HandledException, check_proc, combine_shell_args
+from .util import (HandledException, check_proc, combine_shell_args,
+                   format_datetime)
 
 
 def parse_timedelta(s):
@@ -122,6 +123,29 @@ def list_all_jobs(name, columns, *, log):
 
     for line in proc.stdout.split('\n')[:-1]:
         result.append(line.split('\t'))
+
+    return result
+
+
+def list_completed_jobs(name, columns, last, *, log):
+    format_str = ','.join(columns)
+
+    now = datetime.now()
+
+    proc = subprocess.run(['sacct', '--noheader', '--noconvert',
+                           '--parsable2', '--state=CD',
+                           '--starttime=' + format_datetime(now - last),
+                           '--name=' + name,
+                           '--format=' + format_str],
+                          capture_output=True, text=True)
+
+    if not check_proc(proc, log=log):
+        return
+
+    result = []
+
+    for line in proc.stdout.split('\n')[:-1]:
+        result.append(line.split('|'))
 
     return result
 

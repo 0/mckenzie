@@ -462,6 +462,86 @@ class DatabaseManager(Manager, name='database'):
                           'Mem (GB)', 'Start', 'End'],
                          sorted_data)
 
+    @description('list completed database jobs')
+    @argument('--last-hr', metavar='T', type=float, required=True, help='jobs completed in the last T hours')
+    def list_completed(self, args):
+        last = timedelta(hours=args.last_hr)
+
+        columns = ['JobID', 'AllocCPUS', 'TotalCPU', 'CPUTime', 'MaxRSS',
+                   'ReqMem', 'MaxDiskRead', 'MaxDiskWrite', 'End']
+        jobs = slurm.list_completed_jobs(self.conf.database_job_name, columns,
+                                         last, log=logger.error)
+
+        database_data = []
+        # Only output the warning once.
+        format_warn = False
+
+        for (jobid, cpus, cpu_used, cpu_total, mem_used, mem_total, disk_read,
+                disk_write, time_end) in jobs:
+            now = datetime.now()
+
+            if not jobid.endswith('.batch'):
+                continue
+
+            jobid = jobid[:-6]
+
+            cpu_used = slurm.parse_timedelta(cpu_used)
+            cpu_total = slurm.parse_timedelta(cpu_total)
+
+            cpus = int(cpus)
+
+            if mem_used[-1] == 'K' and mem_used[:-1].isdigit():
+                mem_used = ceil(int(mem_used[:-1]) / 1024 / 1024)
+            else:
+                if not format_warn:
+                    format_warn = True
+                    logger.warning('Invalid format.')
+
+            if mem_total[-2:] == 'Mn' and mem_total[:-2].isdigit():
+                mem_total = ceil(int(mem_total[:-2]) / 1024)
+            else:
+                if not format_warn:
+                    format_warn = True
+                    logger.warning('Invalid format.')
+
+            if disk_read[-1] == 'M':
+                try:
+                    disk_read = ceil(float(disk_read[:-1]) / 1024)
+                except ValueError:
+                    if not format_warn:
+                        format_warn = True
+                        logger.warning('Invalid format.')
+            else:
+                if not format_warn:
+                    format_warn = True
+                    logger.warning('Invalid format.')
+
+            if disk_write[-1] == 'M':
+                try:
+                    disk_write = ceil(float(disk_write[:-1]) / 1024)
+                except ValueError:
+                    if not format_warn:
+                        format_warn = True
+                        logger.warning('Invalid format.')
+            else:
+                if not format_warn:
+                    format_warn = True
+                    logger.warning('Invalid format.')
+
+            try:
+                dt = datetime.fromisoformat(time_end)
+            except ValueError:
+                pass
+            else:
+                time_end = humanize_datetime(dt, now)
+
+            database_data.append([jobid, cpus, cpu_used, cpu_total, mem_used,
+                                  mem_total, disk_read, disk_write, time_end])
+
+        self.print_table(['Job ID', 'Cores', ('CPU (U/T)', 2),
+                          ('Mem (GB;U/T)', 2), ('Disk (GB;R/W)', 2), 'End'],
+                         database_data)
+
     @description('load schema')
     def load_schema(self, args):
         if not self.db.is_initialized(log=logger.error):
