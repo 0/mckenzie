@@ -494,7 +494,7 @@ class Worker(Instance):
 
 @argparsable('worker management')
 class WorkerManager(Manager, name='worker'):
-    # Path to worker output files, relative to chdir.
+    # Path to worker output files, relative to work path.
     WORKER_OUTPUT_DIR = Path('worker_output')
     # Worker output file name template.
     WORKER_OUTPUT_FILE_TEMPLATE = 'worker-{}.out'
@@ -555,7 +555,7 @@ class WorkerManager(Manager, name='worker'):
                     / self.WORKER_OUTPUT_FILE_TEMPLATE.format(slurm_job_id))
 
         if absolute:
-            path = self.conf.general_chdir / path
+            path = self.conf.general_work_path / path
 
         return path
 
@@ -1236,7 +1236,7 @@ class WorkerManager(Manager, name='worker'):
         submitter = slurm.JobSubmitter(name=self.conf.worker_job_name,
                                        signal='TERM',
                                        signal_seconds=self.END_SIGNAL_SECONDS,
-                                       chdir_path=self.conf.general_chdir,
+                                       chdir_path=self.conf.general_work_path,
                                        output_file_path=self._worker_output_file(),
                                        cpus=worker_cpus,
                                        time_hours=worker_time_hours,

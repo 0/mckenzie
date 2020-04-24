@@ -71,7 +71,7 @@ class Conf:
             raise HandledException()
 
         # Extract data.
-        self.general_chdir = Path(self.getstr('general', 'chdir'))
+        self.general_work_path = Path(self.getstr('general', 'work_path'))
         self.general_sbatch_args = self.getstr('general', 'sbatch_args',
                                                fallback=None)
         self.general_unsafe = self.getbool('general', 'unsafe',

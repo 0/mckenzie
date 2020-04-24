@@ -149,20 +149,22 @@ class TaskManager(Manager, name='task'):
 
     @classmethod
     def _clean(cls, conf, task_name):
-        return cls._run_cmd(conf.general_chdir, conf.task_clean_cmd, task_name)
+        return cls._run_cmd(conf.general_work_path, conf.task_clean_cmd,
+                            task_name)
 
     @classmethod
     def _scrub(cls, conf, task_name):
-        return cls._run_cmd(conf.general_chdir, conf.task_scrub_cmd, task_name)
+        return cls._run_cmd(conf.general_work_path, conf.task_scrub_cmd,
+                            task_name)
 
     @classmethod
     def _synthesize(cls, conf, task_name, elapsed_time_hours, max_mem_gb):
-        return cls._run_cmd(conf.general_chdir, conf.task_synthesize_cmd,
+        return cls._run_cmd(conf.general_work_path, conf.task_synthesize_cmd,
                             task_name, elapsed_time_hours, max_mem_gb)
 
     @classmethod
     def _unsynthesize(cls, conf, task_name):
-        return cls._run_cmd(conf.general_chdir, conf.task_unsynthesize_cmd,
+        return cls._run_cmd(conf.general_work_path, conf.task_unsynthesize_cmd,
                             task_name)
 
     def __init__(self, *args, **kwargs):
