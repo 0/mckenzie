@@ -241,22 +241,6 @@ def humanize_datetime(dt, now):
     return template.format(delta_fmt)
 
 
-def parse_slurm_timedelta(s):
-    # Input is of the form "days-hours:minutes:seconds", where we assume that
-    # each piece except the last is optional. Sometimes there may also be a
-    # ".microseconds" component, which we always remove.
-    pieces = reversed(s.split('.')[0].replace('-', ':').split(':'))
-    multipliers = [60, 60, 24, 0]
-
-    total = 0
-
-    for piece, multiplier in reversed(list(zip(pieces, multipliers))):
-        total *= multiplier
-        total += int(piece)
-
-    return timedelta(seconds=total)
-
-
 def combine_shell_args(*argss):
     result = []
 
@@ -287,79 +271,6 @@ def check_proc(proc, *, log):
         return False
 
     return True
-
-
-def check_scancel(proc, *, log):
-    if 'scancel: Terminating job' in proc.stderr:
-        return True
-    elif 'scancel: Signal 2 to batch job' in proc.stderr:
-        return True
-    elif 'scancel: Signal 15 to batch job' in proc.stderr:
-        return True
-    elif 'scancel: error: No active jobs match' in proc.stderr:
-        return False
-    elif proc.returncode == 0:
-        return False
-
-    log(f'Encountered an error ({proc.returncode}).')
-
-    if proc.stdout:
-        log(proc.stdout.strip())
-
-    if proc.stderr:
-        log(proc.stderr.strip())
-
-    return None
-
-
-def cancel_slurm_job(slurm_job_id, *, name, signal, log):
-    # Try to cancel it before it gets a chance to run.
-    proc = subprocess.run(['scancel', '--verbose', '--state=PENDING',
-                           f'--jobname={name}', str(slurm_job_id)],
-                          capture_output=True, text=True)
-    cancel_success = check_scancel(proc, log=log)
-
-    if cancel_success is None:
-        # We encountered an error, so give up.
-        return None
-    elif cancel_success:
-        # Successfully cancelled pending job.
-        return True, False
-
-    # It's already running (or finished), so try to send a signal.
-    proc = subprocess.run(['scancel', '--verbose', '--state=RUNNING',
-                           '--batch', f'--signal={signal}',
-                           f'--jobname={name}', str(slurm_job_id)],
-                          capture_output=True, text=True)
-    signal_success = check_scancel(proc, log=log)
-
-    if signal_success is None:
-        # We encountered an error, so give up.
-        return None
-    elif signal_success:
-        # Successfully signalled running job.
-        return True, True
-
-    return False, None
-
-
-def check_squeue(slurm_job_id, proc, *, log):
-    if proc.stdout.strip() == str(slurm_job_id):
-        return True
-    elif 'slurm_load_jobs error: Invalid job id specified' in proc.stderr:
-        return False
-    elif proc.returncode == 0 and not proc.stdout:
-        return False
-
-    log(f'Encountered an error ({proc.returncode}).')
-
-    if proc.stdout:
-        log(proc.stdout.strip())
-
-    if proc.stderr:
-        log(proc.stderr.strip())
-
-    return None
 
 
 def mem_rss_mb(pid, *, log):

@@ -10,12 +10,11 @@ import subprocess
 import threading
 from time import sleep
 
+from . import slurm
 from .arguments import argparsable, argument, description
 from .base import DatabaseReasonView, DatabaseStateView, Instance, Manager
 from .task import TaskManager, TaskReason, TaskState
-from .util import (HandledException, cancel_slurm_job, check_proc,
-                   check_squeue, combine_shell_args, humanize_datetime,
-                   mem_rss_mb)
+from .util import HandledException, humanize_datetime, mem_rss_mb
 
 
 logger = logging.getLogger(__name__)
@@ -683,16 +682,7 @@ class WorkerManager(Manager, name='worker'):
 
                     return None
 
-                proc = subprocess.run(['squeue', '--noheader', '--format=%A',
-                                       '--jobs=' + str(slurm_job_id)],
-                                      capture_output=True, text=True)
-
-                squeue_success = check_squeue(slurm_job_id, proc,
-                                              log=logger.error)
-
-                if squeue_success is None:
-                    raise HandledException()
-                elif squeue_success:
+                if slurm.does_job_exist(slurm_job_id, log=logger.error):
                     ok_worker_ids.append(slurm_job_id)
 
                     return False
@@ -938,7 +928,7 @@ class WorkerManager(Manager, name='worker'):
                 break
 
             logger.debug(f'Attempting to cancel worker {slurm_job_id}.')
-            cancel_result = cancel_slurm_job(slurm_job_id,
+            cancel_result = slurm.cancel_job(slurm_job_id,
                                              name=self.conf.worker_job_name,
                                              signal=signal, log=logger.error)
 
@@ -968,16 +958,8 @@ class WorkerManager(Manager, name='worker'):
 
     @description('run worker inside Slurm job')
     def run(self, args):
-        try:
-            slurm_job_id = int(os.getenv('SLURM_JOB_ID'))
-        except TypeError:
-            logger.error('Not running in a Slurm job.')
-
-            return
-
-        worker_node = os.getenv('SLURMD_NODENAME')
-        worker_cpus = int(os.getenv('SLURM_JOB_CPUS_PER_NODE'))
-        worker_mem_mb = int(os.getenv('SLURM_MEM_PER_NODE'))
+        slurm_job_id = slurm.get_job_id(log=logger.error)
+        worker_node, worker_cpus, worker_mem_mb = slurm.get_job_variables()
 
         @self.db.tx
         def time_limit(tx):
@@ -1157,34 +1139,12 @@ class WorkerManager(Manager, name='worker'):
 
             return
 
-        worker_time_minutes = ceil(worker_time_hours * 60)
-        worker_mem_mb = ceil(worker_mem_gb * 1024)
-
-        proc_args = ['sbatch']
-        proc_args.append('--hold')
-        proc_args.append('--parsable')
-        proc_args.append('--job-name=' + self.conf.worker_job_name)
-        proc_args.append('--signal=B:TERM@' + str(self.END_SIGNAL_SECONDS))
-        proc_args.append('--chdir=' + str(self.conf.general_chdir))
-        proc_args.append('--output=' + str(self._worker_output_file()))
-        proc_args.append('--cpus-per-task=' + str(worker_cpus))
-        proc_args.append('--time=' + str(worker_time_minutes))
-        proc_args.append('--mem=' + str(worker_mem_mb))
-
-        proc_args.extend(combine_shell_args(self.conf.general_sbatch_args,
-                                            self.conf.worker_sbatch_args,
-                                            sbatch_args))
-
         mck_cmd = shlex.quote(self.conf.worker_mck_cmd)
 
         if self.conf.worker_mck_args is not None:
             mck_args = self.conf.worker_mck_args
         else:
             mck_args = ''
-
-        os.makedirs(self.conf.general_chdir, exist_ok=True)
-        os.makedirs(self.conf.general_chdir / self.WORKER_OUTPUT_DIR,
-                    exist_ok=True)
 
         script = f'''
                 #!/bin/bash
@@ -1193,25 +1153,30 @@ class WorkerManager(Manager, name='worker'):
                 exec {mck_cmd} {mck_args} worker run
                 '''
 
+        submitter = slurm.JobSubmitter(name=self.conf.worker_job_name,
+                                       signal='TERM',
+                                       signal_seconds=self.END_SIGNAL_SECONDS,
+                                       chdir_path=self.conf.general_chdir,
+                                       output_file_path=self._worker_output_file(),
+                                       cpus=worker_cpus,
+                                       time_hours=worker_time_hours,
+                                       mem_gb=worker_mem_gb,
+                                       sbatch_argss=[self.conf.general_sbatch_args,
+                                                     self.conf.worker_sbatch_args,
+                                                     sbatch_args],
+                                       script=script,
+                                       hold=True)
+
         for _ in range(num):
             if self.mck.interrupted:
                 break
 
             logger.debug('Spawning worker job.')
-
-            proc = subprocess.run(proc_args, input=script.strip(),
-                                  capture_output=True, text=True)
-
-            if not check_proc(proc, log=logger.error):
-                return
-
-            if ';' in proc.stdout:
-                # Ignore the cluster name.
-                slurm_job_id = int(proc.stdout.split(';', maxsplit=1)[0])
-            else:
-                slurm_job_id = int(proc.stdout)
+            slurm_job_id = submitter.submit(log=logger.error)
+            logger.info(slurm_job_id)
 
             worker_time = timedelta(hours=worker_time_hours)
+            worker_mem_mb = ceil(worker_mem_gb * 1024)
 
             @self.db.tx
             def F(tx):
@@ -1230,11 +1195,4 @@ class WorkerManager(Manager, name='worker'):
                               self._wr.rlookup('wr_worker_spawn')))
 
             logger.debug(f'Releasing worker job {slurm_job_id}.')
-
-            proc = subprocess.run(['scontrol', 'release', str(slurm_job_id)],
-                                  capture_output=True, text=True)
-
-            if not check_proc(proc, log=logger.error):
-                return
-
-            logger.info(slurm_job_id)
+            slurm.release_job(slurm_job_id, log=logger.error)

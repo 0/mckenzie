@@ -4,12 +4,11 @@ from math import ceil
 import os
 from pathlib import Path
 import shlex
-import subprocess
 
+from . import slurm
 from .arguments import argparsable, argument, description
 from .base import Manager
-from .util import (cancel_slurm_job, check_proc, combine_shell_args,
-                   humanize_datetime, parse_slurm_timedelta)
+from .util import humanize_datetime
 
 
 logger = logging.getLogger(__name__)
@@ -47,22 +46,7 @@ class SupportManager(Manager, name='support'):
     def attach(self, args):
         slurm_job_id = args.slurm_job_id
 
-        proc = subprocess.run(['squeue', '--noheader',
-                               '--user=' + os.environ['USER'],
-                               '--name=' + self.conf.support_job_name,
-                               '--format=%t\t%R',
-                               '--jobs=' + str(slurm_job_id)],
-                              capture_output=True, text=True)
-
-        if not check_proc(proc, log=logger.error):
-            return
-
-        state, node = proc.stdout.strip().split('\t')
-
-        if state != 'R':
-            logger.error(f'Job is in state "{state}".')
-
-            return
+        node = slurm.running_job_node(slurm_job_id, log=logger.error)
 
         socket_dir = self.conf.support_socket_dir_template.format(slurm_job_id)
         socket_path = os.path.join(socket_dir, 'tmux')
@@ -82,30 +66,21 @@ class SupportManager(Manager, name='support'):
     @description('list support jobs')
     def list(self, args):
         columns = ['%A', '%t', '%R', '%P', '%C', '%l', '%m', '%S', '%e']
-        format_str = '\t'.join(columns)
-
-        proc = subprocess.run(['squeue', '--noheader', '--noconvert',
-                               '--user=' + os.environ['USER'],
-                               '--name=' + self.conf.support_job_name,
-                               '--format=' + format_str],
-                              capture_output=True, text=True)
-
-        if not check_proc(proc, log=logger.error):
-            return
+        jobs = slurm.list_all_jobs(self.conf.support_job_name, columns,
+                                   log=logger.error)
 
         raw_time_starts = []
         support_data = []
         # Only output the warning once.
         mem_format_warn = False
 
-        for line in proc.stdout.split('\n')[:-1]:
-            (jobid, state, reason, partition, cpus, time_total, mem,
-                    time_start, time_end) = line.split('\t')
+        for (jobid, state, reason, partition, cpus, time_total, mem,
+                time_start, time_end) in jobs:
             raw_time_starts.append(time_start)
             now = datetime.now()
 
             cpus = int(cpus)
-            time_total = parse_slurm_timedelta(time_total)
+            time_total = slurm.parse_timedelta(time_total)
 
             if mem[-1] == 'M' and mem[:-1].isdigit():
                 mem = ceil(int(mem[:-1]) / 1024)
@@ -150,31 +125,19 @@ class SupportManager(Manager, name='support'):
         slurm_job_ids = set(args.slurm_job_id)
 
         if all_jobs:
-            proc = subprocess.run(['squeue', '--noheader',
-                                   '--user=' + os.environ['USER'],
-                                   '--name=' + self.conf.support_job_name,
-                                   '--format=%A'],
-                                  capture_output=True, text=True)
-
-            if not check_proc(proc, log=logger.error):
-                return
-
-            for slurm_job_id in proc.stdout.split('\n')[:-1]:
-                slurm_job_ids.add(int(slurm_job_id))
+            ids = slurm.get_all_job_ids(self.conf.support_job_name,
+                                        log=logger.error)
+            slurm_job_ids.update(ids)
 
         for slurm_job_id in slurm_job_ids:
             if self.mck.interrupted:
                 break
 
             logger.debug(f'Attempting to cancel Slurm job {slurm_job_id}.')
-            cancel_result = cancel_slurm_job(slurm_job_id,
-                                             name=self.conf.support_job_name,
-                                             signal='INT', log=logger.error)
-
-            if cancel_result is None:
-                return
-
-            cancel_success, signalled_running = cancel_result
+            cancel_success, signalled_running \
+                    = slurm.cancel_job(slurm_job_id,
+                                       name=self.conf.support_job_name,
+                                       signal='INT', log=logger.error)
 
             if cancel_success:
                 logger.info(slurm_job_id)
@@ -197,30 +160,9 @@ class SupportManager(Manager, name='support'):
 
             return
 
-        support_time_minutes = ceil(support_time_hours * 60)
-        support_mem_mb = ceil(support_mem_gb * 1024)
-
-        proc_args = ['sbatch']
-        proc_args.append('--parsable')
-        proc_args.append('--job-name=' + self.conf.support_job_name)
-        proc_args.append('--signal=B:INT@' + str(self.END_SIGNAL_SECONDS))
-        proc_args.append('--chdir=' + str(self.conf.support_path))
-        proc_args.append('--output=' + str(self._support_output_file()))
-        proc_args.append('--cpus-per-task=' + str(support_cpus))
-        proc_args.append('--time=' + str(support_time_minutes))
-        proc_args.append('--mem=' + str(support_mem_mb))
-
-        proc_args.extend(combine_shell_args(self.conf.general_sbatch_args,
-                                            self.conf.support_sbatch_args,
-                                            sbatch_args))
-
         execute_cmd = shlex.quote(self.conf.support_execute_cmd)
         socket_dir = self.conf.support_socket_dir_template.format('${SLURM_JOB_ID}')
         socket_path = os.path.join(socket_dir, 'tmux')
-
-        os.makedirs(self.conf.support_path, exist_ok=True)
-        os.makedirs(self.conf.support_path / self.SUPPORT_OUTPUT_DIR,
-                    exist_ok=True)
 
         script = f'''
                 #!/bin/bash
@@ -265,22 +207,23 @@ class SupportManager(Manager, name='support'):
                 done
                 '''
 
+        submitter = slurm.JobSubmitter(name=self.conf.support_job_name,
+                                       signal='INT',
+                                       signal_seconds=self.END_SIGNAL_SECONDS,
+                                       chdir_path=self.conf.support_path,
+                                       output_file_path=self._support_output_file(),
+                                       cpus=support_cpus,
+                                       time_hours=support_time_hours,
+                                       mem_gb=support_mem_gb,
+                                       sbatch_argss=[self.conf.general_sbatch_args,
+                                                     self.conf.support_sbatch_args,
+                                                     sbatch_args],
+                                       script=script)
+
         for _ in range(num):
             if self.mck.interrupted:
                 break
 
             logger.debug('Spawning support job.')
-
-            proc = subprocess.run(proc_args, input=script.strip(),
-                                  capture_output=True, text=True)
-
-            if not check_proc(proc, log=logger.error):
-                return
-
-            if ';' in proc.stdout:
-                # Ignore the cluster name.
-                slurm_job_id = int(proc.stdout.split(';', maxsplit=1)[0])
-            else:
-                slurm_job_id = int(proc.stdout)
-
+            slurm_job_id = submitter.submit(log=logger.error)
             logger.info(slurm_job_id)
