@@ -109,3 +109,11 @@ class Conf:
         self.worker_job_name = self.getstr('worker', 'job_name')
         self.worker_sbatch_args = self.getstr('worker', 'sbatch_args',
                                               fallback=None)
+
+        job_names = [self.database_job_name, self.support_job_name,
+                     self.worker_job_name]
+
+        if sorted(job_names) != sorted(set(job_names)):
+            logger.error('Job names (*.job_name) must be unique.')
+
+            raise HandledException()
