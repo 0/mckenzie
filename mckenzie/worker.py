@@ -1130,6 +1130,32 @@ class WorkerManager(Manager, name='worker'):
         slurm_job_id = args.slurm_job_id
 
         @self.db.tx
+        def worker(tx):
+            return tx.execute('''
+                    SELECT num_cores, time_limit, mem_limit_mb, node, heartbeat
+                    FROM worker
+                    WHERE id = %s
+                    ''', (slurm_job_id,))
+
+        if len(worker) == 0:
+            logger.error(f'Worker "{slurm_job_id}" does not exist.')
+
+            return
+
+        (num_cores, time_limit, mem_limit_mb, node, heartbeat) = worker[0]
+
+        mem_limit_gb = ceil(mem_limit_mb / 1024)
+        node = node if node is not None else '-'
+        heartbeat = heartbeat if heartbeat is not None else '-'
+
+        self.print_table(['Job ID', 'Cores', 'Time', 'Mem (GB)', 'Node',
+                          'Heartbeat'],
+                         [[str(slurm_job_id), num_cores, time_limit,
+                           mem_limit_gb, node, heartbeat]])
+
+        print()
+
+        @self.db.tx
         def worker_history(tx):
             return tx.execute('''
                     SELECT state_id, time,

@@ -1173,7 +1173,9 @@ class TaskManager(Manager, name='task'):
         @self.db.tx
         def task(tx):
             return tx.execute('''
-                    SELECT id, claimed_by, claimed_since, NOW() - claimed_since
+                    SELECT id, priority, time_limit, mem_limit_mb,
+                           elapsed_time, max_mem_mb, claimed_by, claimed_since,
+                           NOW() - claimed_since
                     FROM task
                     WHERE name = %s
                     ''', (name,))
@@ -1183,7 +1185,18 @@ class TaskManager(Manager, name='task'):
 
             return
 
-        task_id, claimed_by, claimed_since, claimed_for = task[0]
+        (task_id, priority, time_limit, mem_limit_mb, elapsed_time, max_mem_mb,
+                claimed_by, claimed_since, claimed_for) = task[0]
+
+        elapsed_time = elapsed_time if elapsed_time is not None else '-'
+        max_mem_mb = max_mem_mb if max_mem_mb is not None else '-'
+
+        self.print_table(['Name', 'Priority', ('Time (A/E)', 2),
+                          ('Mem (MB;A/E)', 2)],
+                         [[name, priority, elapsed_time, time_limit,
+                           max_mem_mb, mem_limit_mb]])
+
+        print()
 
         @self.db.tx
         def task_history(tx):
