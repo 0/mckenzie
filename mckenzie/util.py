@@ -308,7 +308,7 @@ def flock(path):
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def event_on_sigint(log):
+def event_on_sigint(*, log):
     event = Event()
 
     def _interrupt(signum=None, frame=None):

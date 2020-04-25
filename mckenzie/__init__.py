@@ -135,7 +135,7 @@ class McKenzie:
         return True
 
     def _reset_interrupt(self):
-        self._interrupt_event = event_on_sigint(logger.debug)
+        self._interrupt_event = event_on_sigint(log=logger.debug)
 
     @property
     def interrupted(self):
