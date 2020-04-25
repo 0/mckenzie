@@ -112,7 +112,8 @@ class SupportManager(Manager, name='support'):
 
         # Sort by start time.
         sorted_data = [row for (s, row) in sorted(zip(raw_time_starts,
-                                                      support_data))]
+                                                      support_data),
+                                                  reverse=True)]
         self.print_table(['Job ID', ('State', 2), 'Partition', 'Cores', 'Time',
                           'Mem (GB)', 'Start', 'End'],
                          sorted_data)

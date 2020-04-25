@@ -775,10 +775,10 @@ class WorkerManager(Manager, name='worker'):
                 query += ' WHERE (ws.job_running OR w.state_id = %s)'
                 query_args += (self._ws.rlookup('ws_failed'),)
 
-            # Order by remaining time, putting failed workers first.
+            # Order by remaining time, putting failed workers at the bottom.
             query += '''
-                    ORDER BY w.state_id = %s DESC,
-                             w.time_start + w.time_limit - NOW()
+                    ORDER BY w.state_id = %s,
+                             w.time_start + w.time_limit - NOW() DESC
                     '''
             query_args += (self._ws.rlookup('ws_failed'),)
 
