@@ -309,7 +309,7 @@ class Database:
             def F(tx):
                 tx.advisory_unlock(*args, **kwargs)
 
-    def is_initialized(self, *, log=logger.info):
+    def is_initialized(self, *, log):
         try:
             with self.without_reconnect():
                 @self.tx
@@ -326,7 +326,7 @@ class Database:
 
         return success
 
-    def is_current(self, *, log=logger.info):
+    def is_current(self, *, log):
         db_version = self.tx(self.schema_version)
 
         if db_version is None:
@@ -377,10 +377,10 @@ class DatabaseManager(Manager, name='database'):
         return path
 
     def summary(self, args):
-        if not self.db.is_initialized():
+        if not self.db.is_initialized(log=logger.info):
             return
 
-        if not self.db.is_current():
+        if not self.db.is_current(log=logger.info):
             return
 
         logger.info(f'Database "{self.db.dbname}" at '
