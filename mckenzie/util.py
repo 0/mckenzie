@@ -258,22 +258,23 @@ def combine_shell_args(*argss):
     return result
 
 
-def check_proc(proc, *, log):
+def check_proc(proc, *, log, stacklevel=1):
     if proc.returncode != 0:
-        log(f'Encountered an error ({proc.returncode}).')
+        log(f'Encountered an error ({proc.returncode}).',
+            stacklevel=stacklevel+1)
 
         if proc.stdout:
-            log(proc.stdout.strip())
+            log(proc.stdout.strip(), stacklevel=stacklevel+1)
 
         if proc.stderr:
-            log(proc.stderr.strip())
+            log(proc.stderr.strip(), stacklevel=stacklevel+1)
 
         return False
 
     return True
 
 
-def mem_rss_mb(pid, *, log):
+def mem_rss_mb(pid, *, log, stacklevel=1):
     try:
         # Get the memory usage of each process in the session.
         proc = subprocess.run(['ps', '-o', 'rss=', '--sid', str(pid)],
@@ -281,7 +282,7 @@ def mem_rss_mb(pid, *, log):
     except OSError:
         return None
 
-    if not check_proc(proc, log=log):
+    if not check_proc(proc, log=log, stacklevel=stacklevel+1):
         return None
 
     result = 0
@@ -308,11 +309,11 @@ def flock(path):
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def event_on_sigint(*, log):
+def event_on_sigint(*, log, stacklevel=1):
     event = Event()
 
     def _interrupt(signum=None, frame=None):
-        log('Interrupted.')
+        log('Interrupted.', stacklevel=stacklevel+1)
         event.set()
         # If we recieve the signal again, abort in the usual fashion.
         signal.signal(signal.SIGINT, signal.default_int_handler)

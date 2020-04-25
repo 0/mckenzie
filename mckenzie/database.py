@@ -309,7 +309,7 @@ class Database:
             def F(tx):
                 tx.advisory_unlock(*args, **kwargs)
 
-    def is_initialized(self, *, log):
+    def is_initialized(self, *, log, stacklevel=1):
         try:
             with self.without_reconnect():
                 @self.tx
@@ -322,26 +322,26 @@ class Database:
 
         if not success:
             log(f'Database "{self.dbname}" at {self.dbhost}:{self.dbport} has '
-                'not been initialized.')
+                'not been initialized.', stacklevel=stacklevel+1)
 
         return success
 
-    def is_current(self, *, log):
+    def is_current(self, *, log, stacklevel=1):
         db_version = self.tx(self.schema_version)
 
         if db_version is None:
-            log('Schema not loaded.')
+            log('Schema not loaded.', stacklevel=stacklevel+1)
 
             return False
 
         if db_version == False:
-            log('Schema version missing.')
+            log('Schema version missing.', stacklevel=stacklevel+1)
 
             return False
 
         if db_version != self.SCHEMA_VERSION:
             log(f'Schema version "{db_version}" does not match '
-                f'"{self.SCHEMA_VERSION}".')
+                f'"{self.SCHEMA_VERSION}".', stacklevel=stacklevel+1)
 
             return False
 

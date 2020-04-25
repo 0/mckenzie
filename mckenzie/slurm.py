@@ -23,7 +23,7 @@ def parse_timedelta(s):
     return timedelta(seconds=total)
 
 
-def check_scancel(proc, *, log):
+def check_scancel(proc, *, log, stacklevel=1):
     if 'scancel: Terminating job' in proc.stderr:
         return True
     elif 'scancel: Signal 2 to batch job' in proc.stderr:
@@ -35,22 +35,22 @@ def check_scancel(proc, *, log):
     elif proc.returncode == 0:
         return False
 
-    log(f'Encountered an error ({proc.returncode}).')
+    log(f'Encountered an error ({proc.returncode}).', stacklevel=stacklevel+1)
 
     if proc.stdout:
-        log(proc.stdout.strip())
+        log(proc.stdout.strip(), stacklevel=stacklevel+1)
 
     if proc.stderr:
-        log(proc.stderr.strip())
+        log(proc.stderr.strip(), stacklevel=stacklevel+1)
 
     return None
 
-def cancel_job(slurm_job_id, *, name, signal, log):
+def cancel_job(slurm_job_id, *, name, signal, log, stacklevel=1):
     # Try to cancel it before it gets a chance to run.
     proc = subprocess.run(['scancel', '--verbose', '--state=PENDING',
                            f'--jobname={name}', str(slurm_job_id)],
                           capture_output=True, text=True)
-    cancel_success = check_scancel(proc, log=log)
+    cancel_success = check_scancel(proc, log=log, stacklevel=stacklevel+1)
 
     if cancel_success is None:
         # We encountered an error, so give up.
@@ -64,7 +64,7 @@ def cancel_job(slurm_job_id, *, name, signal, log):
                            '--batch', f'--signal={signal}',
                            f'--jobname={name}', str(slurm_job_id)],
                           capture_output=True, text=True)
-    signal_success = check_scancel(proc, log=log)
+    signal_success = check_scancel(proc, log=log, stacklevel=stacklevel+1)
 
     if signal_success is None:
         # We encountered an error, so give up.
@@ -76,7 +76,7 @@ def cancel_job(slurm_job_id, *, name, signal, log):
     return False, None
 
 
-def check_squeue(slurm_job_id, proc, *, log):
+def check_squeue(slurm_job_id, proc, *, log, stacklevel=1):
     if proc.stdout.strip() == str(slurm_job_id):
         return True
     elif 'slurm_load_jobs error: Invalid job id specified' in proc.stderr:
@@ -84,21 +84,22 @@ def check_squeue(slurm_job_id, proc, *, log):
     elif proc.returncode == 0 and not proc.stdout:
         return False
 
-    log(f'Encountered an error ({proc.returncode}).')
+    log(f'Encountered an error ({proc.returncode}).', stacklevel=stacklevel+1)
 
     if proc.stdout:
-        log(proc.stdout.strip())
+        log(proc.stdout.strip(), stacklevel=stacklevel+1)
 
     if proc.stderr:
-        log(proc.stderr.strip())
+        log(proc.stderr.strip(), stacklevel=stacklevel+1)
 
     return None
 
-def does_job_exist(slurm_job_id, *, log):
+def does_job_exist(slurm_job_id, *, log, stacklevel=1):
     proc = subprocess.run(['squeue', '--noheader', '--format=%A',
                            '--jobs=' + str(slurm_job_id)],
                           capture_output=True, text=True)
-    squeue_success = check_squeue(slurm_job_id, proc, log=log)
+    squeue_success = check_squeue(slurm_job_id, proc, log=log,
+                                  stacklevel=stacklevel+1)
 
     if squeue_success is None:
         # We encountered an error, so give up.
@@ -107,7 +108,7 @@ def does_job_exist(slurm_job_id, *, log):
     return squeue_success
 
 
-def list_all_jobs(name, columns, *, log):
+def list_all_jobs(name, columns, *, log, stacklevel=1):
     format_str = '\t'.join(columns)
 
     proc = subprocess.run(['squeue', '--noheader', '--noconvert',
@@ -116,7 +117,7 @@ def list_all_jobs(name, columns, *, log):
                            '--format=' + format_str],
                           capture_output=True, text=True)
 
-    if not check_proc(proc, log=log):
+    if not check_proc(proc, log=log, stacklevel=stacklevel+1):
         raise HandledException()
 
     result = []
@@ -127,7 +128,7 @@ def list_all_jobs(name, columns, *, log):
     return result
 
 
-def list_completed_jobs(name, columns, last, *, log):
+def list_completed_jobs(name, columns, last, *, log, stacklevel=1):
     format_str = ','.join(columns)
 
     now = datetime.now()
@@ -139,7 +140,7 @@ def list_completed_jobs(name, columns, last, *, log):
                            '--format=' + format_str],
                           capture_output=True, text=True)
 
-    if not check_proc(proc, log=log):
+    if not check_proc(proc, log=log, stacklevel=stacklevel+1):
         return
 
     result = []
@@ -150,17 +151,17 @@ def list_completed_jobs(name, columns, last, *, log):
     return result
 
 
-def get_all_job_ids(name, *, log):
-    jobs = list_all_jobs(name, ['%A'], log=log)
+def get_all_job_ids(name, *, log, stacklevel=1):
+    jobs = list_all_jobs(name, ['%A'], log=log, stacklevel=stacklevel+1)
 
     return [int(job[0]) for job in jobs]
 
 
-def get_job_id(*, log):
+def get_job_id(*, log, stacklevel=1):
     try:
         return int(os.getenv('SLURM_JOB_ID'))
     except TypeError:
-        log('Not running in a Slurm job.')
+        log('Not running in a Slurm job.', stacklevel=stacklevel+1)
 
         raise HandledException()
 
@@ -172,19 +173,19 @@ def get_job_variables():
     return job_node, job_cpus, job_mem_mb
 
 
-def running_job_node(slurm_job_id, *, log):
+def running_job_node(slurm_job_id, *, log, stacklevel=1):
     proc = subprocess.run(['squeue', '--noheader',
                            '--format=%t\t%R',
                            '--jobs=' + str(slurm_job_id)],
                           capture_output=True, text=True)
 
-    if not check_proc(proc, log=log):
+    if not check_proc(proc, log=log, stacklevel=stacklevel+1):
         raise HandledException()
 
     state, node = proc.stdout.strip().split('\t')
 
     if state != 'R':
-        log(f'Job is in state "{state}".')
+        log(f'Job is in state "{state}".', stacklevel=stacklevel+1)
 
         raise HandledException()
 
@@ -219,11 +220,11 @@ class JobSubmitter:
         os.makedirs(chdir_path / os.path.dirname(output_file_path),
                     exist_ok=True)
 
-    def submit(self, *, log):
+    def submit(self, *, log, stacklevel=1):
         proc = subprocess.run(self.proc_args, input=self.script,
                               capture_output=True, text=True)
 
-        if not check_proc(proc, log=log):
+        if not check_proc(proc, log=log, stacklevel=stacklevel+1):
             raise HandledException()
 
         if ';' in proc.stdout:
@@ -235,9 +236,9 @@ class JobSubmitter:
         return slurm_job_id
 
 
-def release_job(slurm_job_id, *, log):
+def release_job(slurm_job_id, *, log, stacklevel=1):
     proc = subprocess.run(['scontrol', 'release', str(slurm_job_id)],
                           capture_output=True, text=True)
 
-    if not check_proc(proc, log=log):
+    if not check_proc(proc, log=log, stacklevel=stacklevel+1):
         raise HandledException()
