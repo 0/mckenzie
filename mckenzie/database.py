@@ -170,12 +170,37 @@ class Database:
 
         return int(db_version[0][0])
 
-    def __init__(self, *, dbpath, dbname, dbuser, dbpassword, dbport):
+    def __init__(self, *, dbpath, dbname, dbuser, dbpassword, dbport,
+                 dbschema):
+        if dbschema is not None:
+            schema_valid = True
+
+            for i, c in enumerate(dbschema):
+                if 'A' <= c <= 'Z':
+                    continue
+                elif 'a' <= c <= 'z':
+                    continue
+                elif i >= 1 and '0' <= c <= '9':
+                    continue
+                elif i >= 1 and c == '_':
+                    continue
+
+                schema_valid = False
+
+                break
+
+            if not (dbschema and schema_valid):
+                logger.error('Schema name must match '
+                             '"^[A-Za-z][A-Za-z0-9_]*$".')
+
+                raise HandledException()
+
         self.dbpath = dbpath
         self.dbname = dbname
         self.dbuser = dbuser
         self.dbpassword = dbpassword
         self.dbport = dbport
+        self.dbschema = dbschema
 
         self._dbhost = None
         self._conn = None
@@ -203,9 +228,14 @@ class Database:
     def conn(self):
         if self._conn is None:
             logger.debug('Connecting to database.')
-            self._conn = psycopg2.connect(dbname=self.dbname, user=self.dbuser,
-                                          password=self.dbpassword,
-                                          host=self.dbhost, port=self.dbport)
+            kwargs = {'dbname': self.dbname, 'user': self.dbuser,
+                      'password': self.dbpassword, 'host': self.dbhost,
+                      'port': self.dbport}
+
+            if self.dbschema is not None:
+                kwargs['options'] = f'-c search_path={self.dbschema}'
+
+            self._conn = psycopg2.connect(**kwargs)
 
         return self._conn
 
@@ -404,6 +434,9 @@ class DatabaseManager(Manager, name='database'):
 
         proc_env = {'PGPASSWORD': self.db.dbpassword}
 
+        if self.db.dbschema is not None:
+            proc_env['PGOPTIONS'] = f'-c search_path={self.db.dbschema}'
+
         logger.debug('Starting database client.')
 
         os.execvpe('psql', proc_args, {**os.environ, **proc_env})
@@ -563,6 +596,9 @@ class DatabaseManager(Manager, name='database'):
                     logger.info('Schema already loaded, and up to date.')
 
                 raise HandledException()
+
+            if self.db.dbschema is not None:
+                tx.execute(f'CREATE SCHEMA IF NOT EXISTS {self.db.dbschema}')
 
             paths = []
 

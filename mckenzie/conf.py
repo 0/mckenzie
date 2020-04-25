@@ -81,7 +81,9 @@ class Conf:
                            dbname=self.getstr('database', 'dbname'),
                            dbuser=self.getstr('database', 'user'),
                            dbpassword=self.getstr('database', 'password'),
-                           dbport=self.getint('database', 'port'))
+                           dbport=self.getint('database', 'port'),
+                           dbschema=self.getstr('database', 'schema',
+                                                fallback=None))
         self.database_mck_cmd = self.getstr('database', 'mck_cmd')
         self.database_mck_args = self.getstr('database', 'mck_args',
                                              fallback=None)
