@@ -1,5 +1,5 @@
 from contextlib import ExitStack
-from datetime import timedelta
+from datetime import datetime, timedelta
 from heapq import heappop, heappush
 import logging
 import os
@@ -90,6 +90,34 @@ class ClaimStack(ExitStack):
 
     def add(self, task_id):
         self.claimed_ids.add(task_id)
+
+
+class LimitChecker:
+    def __init__(self, *, count_limit=None, time_limit_hr=None):
+        self.count_remaining = count_limit
+
+        if time_limit_hr is not None:
+            self.time_end = datetime.now() + timedelta(hours=time_limit_hr)
+        else:
+            self.time_end = None
+
+    def count(self):
+        if self.count_remaining is not None:
+            self.count_remaining -= 1
+
+    @property
+    def reached(self):
+        if self.count_remaining is not None and self.count_remaining <= 0:
+            logger.debug('Count limit reached.')
+
+            return True
+
+        if self.time_end is not None and datetime.now() >= self.time_end:
+            logger.debug('Time limit reached.')
+
+            return True
+
+        return False
 
 
 @argparsable('task management')
@@ -202,10 +230,12 @@ class TaskManager(Manager, name='task'):
             raise HandledException()
 
     def _simple_state_change(self, from_state_id, to_state_id, reason_id,
-                             name_pattern, names):
+                             name_pattern, names, *, count_limit=None,
+                             time_limit_hr=None):
         task_names = names.copy()
+        lc = LimitChecker(count_limit=count_limit, time_limit_hr=time_limit_hr)
 
-        while not self.mck.interrupted:
+        while not self.mck.interrupted and not lc.reached:
             logger.debug('Selecting next task.')
 
             with ClaimStack(self) as cs:
@@ -332,6 +362,7 @@ class TaskManager(Manager, name='task'):
                     continue
 
                 logger.info(task_name)
+                lc.count()
 
     def _build_rerun_task_list(self, cs, locked_dependency_keys, target_data):
         """
@@ -542,25 +573,37 @@ class TaskManager(Manager, name='task'):
             self._unclaim(tx, task_id, self.ident)
 
     @description('change task state to "cancelled"')
+    @argument('--count-limit', metavar='N', type=int, help='stop after N tasks')
+    @argument('--time-limit-hr', metavar='T', type=float, help='stop after T hours')
     @argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
     @argument('name', nargs='*', help='task name')
     def cancel(self, args):
+        count_limit = args.count_limit
+        time_limit_hr = args.time_limit_hr
         name_pattern = args.name_pattern
         names = args.name
 
         self._simple_state_change(None,
                                   self._ts.rlookup('ts_cancelled'),
                                   self._tr.rlookup('tr_task_cancel'),
-                                  name_pattern, names)
+                                  name_pattern, names, count_limit=count_limit,
+                                  time_limit_hr=time_limit_hr)
 
     @description('run clean command for "cleanable" tasks')
+    @argument('--count-limit', metavar='N', type=int, help='stop after N tasks')
+    @argument('--time-limit-hr', metavar='T', type=float, help='stop after T hours')
     def clean(self, args):
+        count_limit = args.count_limit
+        time_limit_hr = args.time_limit_hr
+
+        lc = LimitChecker(count_limit=count_limit, time_limit_hr=time_limit_hr)
+
         # We start by finishing the cleaning process for tasks that were left
         # in "cleaning". Once there are no more, we move on to "cleanable"
         # tasks, which are more difficult to handle.
         searching_for_cleaning = True
 
-        while not self.mck.interrupted:
+        while not self.mck.interrupted and not lc.reached:
             logger.debug('Selecting next task.')
 
             with ClaimStack(self) as cs:
@@ -748,31 +791,43 @@ class TaskManager(Manager, name='task'):
                             ''', (task_id, self._ts.rlookup('ts_cleaned'),
                                   self._tr.rlookup('tr_task_clean_cleaned')))
 
+            lc.count()
+
         logger.debug('Exited cleanly.')
 
     @description('change task state from "synthesized" to "cleanable"')
+    @argument('--count-limit', metavar='N', type=int, help='stop after N tasks')
+    @argument('--time-limit-hr', metavar='T', type=float, help='stop after T hours')
     @argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
     @argument('name', nargs='*', help='task name')
     def cleanablize(self, args):
+        count_limit = args.count_limit
+        time_limit_hr = args.time_limit_hr
         name_pattern = args.name_pattern
         names = args.name
 
         self._simple_state_change(None,
                                   self._ts.rlookup('ts_cleanable'),
                                   self._tr.rlookup('tr_task_cleanablize'),
-                                  name_pattern, names)
+                                  name_pattern, names, count_limit=count_limit,
+                                  time_limit_hr=time_limit_hr)
 
     @description('change task state to "held"')
+    @argument('--count-limit', metavar='N', type=int, help='stop after N tasks')
+    @argument('--time-limit-hr', metavar='T', type=float, help='stop after T hours')
     @argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
     @argument('name', nargs='*', help='task name')
     def hold(self, args):
+        count_limit = args.count_limit
+        time_limit_hr = args.time_limit_hr
         name_pattern = args.name_pattern
         names = args.name
 
         self._simple_state_change(None,
                                   self._ts.rlookup('ts_held'),
                                   self._tr.rlookup('tr_task_hold'),
-                                  name_pattern, names)
+                                  name_pattern, names, count_limit=count_limit,
+                                  time_limit_hr=time_limit_hr)
 
     @description('list tasks')
     @argument('--state', metavar='S', help='only tasks in state S')
@@ -884,16 +939,21 @@ class TaskManager(Manager, name='task'):
                          task_data)
 
     @description('change "held" task state to "waiting"')
+    @argument('--count-limit', metavar='N', type=int, help='stop after N tasks')
+    @argument('--time-limit-hr', metavar='T', type=float, help='stop after T hours')
     @argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
     @argument('name', nargs='*', help='task name')
     def release(self, args):
+        count_limit = args.count_limit
+        time_limit_hr = args.time_limit_hr
         name_pattern = args.name_pattern
         names = args.name
 
         self._simple_state_change(self._ts.rlookup('ts_held'),
                                   self._ts.rlookup('ts_waiting'),
                                   self._tr.rlookup('tr_task_release'),
-                                  name_pattern, names)
+                                  name_pattern, names, count_limit=count_limit,
+                                  time_limit_hr=time_limit_hr)
 
     @description('rerun a task and all its dependents')
     @argument('name', help='task name')
@@ -1346,8 +1406,15 @@ class TaskManager(Manager, name='task'):
             print('Not claimed.')
 
     @description('synthesize completed tasks')
+    @argument('--count-limit', metavar='N', type=int, help='stop after N tasks')
+    @argument('--time-limit-hr', metavar='T', type=float, help='stop after T hours')
     def synthesize(self, args):
-        while not self.mck.interrupted:
+        count_limit = args.count_limit
+        time_limit_hr = args.time_limit_hr
+
+        lc = LimitChecker(count_limit=count_limit, time_limit_hr=time_limit_hr)
+
+        while not self.mck.interrupted and not lc.reached:
             logger.debug('Selecting next task.')
 
             @self.db.tx
@@ -1401,28 +1468,40 @@ class TaskManager(Manager, name='task'):
                             ''', (task_id, self._ts.rlookup('ts_synthesized'),
                                   self._tr.rlookup('tr_task_synthesize')))
 
+            lc.count()
+
         logger.debug('Exited cleanly.')
 
     @description('change "cancelled" task state to "waiting"')
+    @argument('--count-limit', metavar='N', type=int, help='stop after N tasks')
+    @argument('--time-limit-hr', metavar='T', type=float, help='stop after T hours')
     @argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
     @argument('name', nargs='*', help='task name')
     def uncancel(self, args):
+        count_limit = args.count_limit
+        time_limit_hr = args.time_limit_hr
         name_pattern = args.name_pattern
         names = args.name
 
         self._simple_state_change(self._ts.rlookup('ts_cancelled'),
                                   self._ts.rlookup('ts_waiting'),
                                   self._tr.rlookup('tr_task_uncancel'),
-                                  name_pattern, names)
+                                  name_pattern, names, count_limit=count_limit,
+                                  time_limit_hr=time_limit_hr)
 
     @description('change task state from "cleanable" to "synthesized"')
+    @argument('--count-limit', metavar='N', type=int, help='stop after N tasks')
+    @argument('--time-limit-hr', metavar='T', type=float, help='stop after T hours')
     @argument('--name-pattern', metavar='P', help='include tasks with names matching the SQL LIKE pattern P')
     @argument('name', nargs='*', help='task name')
     def uncleanablize(self, args):
+        count_limit = args.count_limit
+        time_limit_hr = args.time_limit_hr
         name_pattern = args.name_pattern
         names = args.name
 
         self._simple_state_change(self._ts.rlookup('ts_cleanable'),
                                   self._ts.rlookup('ts_synthesized'),
                                   self._tr.rlookup('tr_task_uncleanablize'),
-                                  name_pattern, names)
+                                  name_pattern, names, count_limit=count_limit,
+                                  time_limit_hr=time_limit_hr)
