@@ -42,16 +42,22 @@ class SupportManager(Manager, name='support'):
         logger.info('No action specified.')
 
     @description('attach to support job')
+    @argument('--node', metavar='N', help='name of node on which job is running')
     @argument('slurm_job_id', type=int, help='Slurm job ID of support job')
     def attach(self, args):
+        node = args.node
         slurm_job_id = args.slurm_job_id
 
-        node = slurm.running_job_node(slurm_job_id, log=logger.error)
+        if node is None:
+            logger.debug(f'Getting node name from Slurm.')
+            node = slurm.running_job_node(slurm_job_id, log=logger.error)
+            logger.debug(f'Using node name "{node}".')
+        else:
+            logger.debug(f'Using supplied node name "{node}".')
 
         socket_dir = self.conf.support_socket_dir_template.format(slurm_job_id)
         socket_path = os.path.join(socket_dir, 'tmux')
 
-        logger.debug(f'Job is running on: {node}')
         logger.debug(f'Using socket path: {socket_path}')
 
         proc_args = ['ssh']
