@@ -142,25 +142,6 @@ class TaskManager(Manager, name='task'):
             raise TaskClaimError(task_id, claimed_by)
 
     @staticmethod
-    def _parse_claim(ident):
-        agent_type_id = (ident & (0xff << 24)) >> 24
-
-        if agent_type_id == 0x01:
-            agent_type = 'manager'
-            agent_id = ident & 0xffff
-        elif agent_type_id == 0x02:
-            agent_type = 'worker'
-            agent_id = ident & 0xffffff
-        else:
-            agent_type = '???'
-            agent_id = ident
-
-        if agent_id is not None:
-            return f'{agent_type} {agent_id}'
-        else:
-            return agent_type
-
-    @staticmethod
     def _run_cmd(chdir, cmd, *args):
         kwargs = {
             'cwd': chdir,
@@ -902,8 +883,8 @@ class TaskManager(Manager, name='task'):
         @self.db.tx
         def tasks(tx):
             query = '''
-                    SELECT name, state_id, claimed_by, claimed_since,
-                           NOW() - claimed_since AS claimed_for
+                    SELECT name, state_id, parse_claim(claimed_by),
+                           claimed_since, NOW() - claimed_since AS claimed_for
                     FROM task
                     WHERE claimed_by IS NOT NULL
                     '''
@@ -930,9 +911,8 @@ class TaskManager(Manager, name='task'):
 
         for name, state_id, claimed_by, claimed_since, claimed_for in tasks:
             state_user = self._ts.lookup(state_id, user=True)
-            agent = self._parse_claim(claimed_by)
 
-            task_data.append([name, state_user, agent, claimed_since,
+            task_data.append([name, state_user, claimed_by, claimed_since,
                               claimed_for])
 
         self.print_table(['Name', 'State', 'Claimed by', 'Since', 'For'],
@@ -1226,8 +1206,8 @@ class TaskManager(Manager, name='task'):
         def task(tx):
             return tx.execute('''
                     SELECT id, priority, time_limit, mem_limit_mb,
-                           elapsed_time, max_mem_mb, claimed_by, claimed_since,
-                           NOW() - claimed_since
+                           elapsed_time, max_mem_mb, parse_claim(claimed_by),
+                           claimed_since, NOW() - claimed_since
                     FROM task
                     WHERE name = %s
                     ''', (name,))
@@ -1399,7 +1379,7 @@ class TaskManager(Manager, name='task'):
         print()
 
         if claimed_by is not None:
-            print(f'Claimed by "{self._parse_claim(claimed_by)}" since '
+            print(f'Claimed by "{claimed_by}" since '
                   f'{format_datetime(claimed_since)} '
                   f'(for {format_timedelta(claimed_for)}).')
         else:
