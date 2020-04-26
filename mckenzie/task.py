@@ -332,14 +332,6 @@ class TaskManager(Manager, name='task'):
                     continue
 
                 logger.info(task_name)
-        else:
-            logger.debug('Interrupted from task loop.')
-
-            return False
-
-        logger.debug('Finished successfully.')
-
-        return True
 
     def _build_rerun_task_list(self, cs, locked_dependency_keys, target_data):
         """
