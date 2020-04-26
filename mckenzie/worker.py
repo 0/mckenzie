@@ -1125,8 +1125,10 @@ class WorkerManager(Manager, name='worker'):
                         ''', (slurm_job_id, state_id, reason_id))
 
     @description('show worker details')
+    @argument('--inactive-tasks', action='store_true', help='include inactive tasks')
     @argument('slurm_job_id', type=int, help='Slurm job ID of worker')
     def show(self, args):
+        hide_inactive_tasks = not args.inactive_tasks
         slurm_job_id = args.slurm_job_id
 
         @self.db.tx
@@ -1184,16 +1186,37 @@ class WorkerManager(Manager, name='worker'):
 
         print()
 
+        if hide_inactive_tasks:
+            @self.db.tx
+            def hidden_inactive_tasks(tx):
+                return tx.execute('''
+                        SELECT COUNT(*)
+                        FROM worker_task
+                        WHERE worker_id = %s
+                        AND NOT active
+                        ''', (slurm_job_id,))[0][0]
+        else:
+            hidden_inactive_tasks = 0
+
         @self.db.tx
         def worker_task(tx):
-            return tx.execute('''
+            query = '''
                     SELECT t.name, wt.time_active, wt.time_inactive,
                            NOW() - wt.time_active
                     FROM worker_task wt
                     JOIN task t ON t.id = wt.task_id
                     WHERE wt.worker_id = %s
+                    '''
+            query_args = (slurm_job_id,)
+
+            if hide_inactive_tasks:
+                query += ' AND wt.active'
+
+            query += '''
                     ORDER BY wt.id
-                    ''', (slurm_job_id,))
+                    '''
+
+            return tx.execute(query, query_args)
 
         task_data = []
 
@@ -1208,8 +1231,19 @@ class WorkerManager(Manager, name='worker'):
         if task_data:
             self.print_table(['Task', 'Active at', 'Inactive at', 'Duration'],
                              task_data)
+
+            if hidden_inactive_tasks >= 1:
+                print()
         else:
-            print('No worker tasks.')
+            if hidden_inactive_tasks >= 1:
+                print('No active tasks. ', end='')
+            else:
+                print('No worker tasks.')
+
+        if hidden_inactive_tasks == 1:
+            print('Omitted 1 inactive task.')
+        elif hidden_inactive_tasks >= 2:
+            print(f'Omitted {hidden_inactive_tasks} inactive tasks.')
 
         print()
 
