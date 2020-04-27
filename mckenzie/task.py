@@ -64,11 +64,10 @@ class TaskNote(DatabaseNoteView):
 
 
 class TaskClaimError(Exception):
-    def __init__(self, task_id, claimed_by):
+    def __init__(self, task_id):
         super().__init__()
 
         self.task_id = task_id
-        self.claimed_by = claimed_by
 
 
 class ClaimStack(ExitStack):
@@ -84,7 +83,7 @@ class ClaimStack(ExitStack):
             @mgr.db.tx
             def F(tx):
                 for task_id in self.claimed_ids:
-                    TaskManager._unclaim(tx, task_id, mgr.ident)
+                    TaskManager._unclaim(tx, task_id)
 
         self.callback(unclaim_all)
 
@@ -127,19 +126,18 @@ class TaskManager(Manager, name='task'):
                    'cleaned']
 
     @staticmethod
-    def _claim(tx, task_id, claimed_by):
-        success = tx.callproc('task_claim', (task_id, claimed_by))[0][0]
+    def _claim(tx, task_id):
+        success = tx.callproc('task_claim', (task_id))[0][0]
 
         if not success:
-            raise TaskClaimError(task_id, claimed_by)
+            raise TaskClaimError(task_id)
 
     @staticmethod
-    def _unclaim(tx, task_id, claimed_by, *, force=False):
-        success = tx.callproc('task_unclaim',
-                              (task_id, claimed_by, force))[0][0]
+    def _unclaim(tx, task_id, *, force=False):
+        success = tx.callproc('task_unclaim', (task_id, force))[0][0]
 
         if not success:
-            raise TaskClaimError(task_id, claimed_by)
+            raise TaskClaimError(task_id)
 
     @staticmethod
     def _run_cmd(chdir, cmd, *args):
@@ -233,13 +231,13 @@ class TaskManager(Manager, name='task'):
                     def task(tx):
                         return tx.execute('''
                                 SELECT t.id, t.state_id, tst.id,
-                                       task_claim(t.id, %s)
+                                       task_claim(t.id)
                                 FROM task t
                                 LEFT JOIN task_state_transition tst
                                     ON (tst.from_state_id = t.state_id
                                         AND tst.to_state_id = %s)
                                 WHERE t.name = %s
-                                ''', (self.ident, to_state_id, task_name))
+                                ''', (to_state_id, task_name))
 
                     if len(task) == 0:
                         logger.warning(f'Task "{task_name}" does not exist.')
@@ -291,10 +289,10 @@ class TaskManager(Manager, name='task'):
                                     LIMIT 1
                                     FOR UPDATE OF t SKIP LOCKED
                                 )
-                                SELECT id, name, state_id, task_claim(id, %s)
+                                SELECT id, name, state_id, task_claim(id)
                                 FROM next_task
                                 '''
-                        query_args += (to_state_id, self.ident)
+                        query_args += (to_state_id,)
 
                         return tx.execute(query, query_args)
 
@@ -379,13 +377,12 @@ class TaskManager(Manager, name='task'):
 
                 return tx.execute('''
                         SELECT t.id, t.name, t.state_id, ts.incomplete,
-                               t.elapsed_time, t.max_mem_mb,
-                               task_claim(t.id, %s)
+                               t.elapsed_time, t.max_mem_mb, task_claim(t.id)
                         FROM task t
                         JOIN task_state ts ON ts.id = t.state_id
                         JOIN task_dependency td ON td.task_id = t.id
                         WHERE td.dependency_id = %s
-                        ''', (self.ident, cur_id))
+                        ''', (cur_id,))
 
             any_claim_failed = False
 
@@ -483,9 +480,9 @@ class TaskManager(Manager, name='task'):
                                           mem_limit_mb)
                         VALUES (%s, %s, %s, %s, %s)
                         ON CONFLICT (name) DO NOTHING
-                        RETURNING id, task_claim(id, %s)
+                        RETURNING id, task_claim(id)
                         ''', (name, self._ts.rlookup('ts_waiting'), priority,
-                              time_limit, mem_limit_mb, self.ident))
+                              time_limit, mem_limit_mb))
             except CheckViolation as e:
                 if e.constraint_name == 'name_spaces':
                     logger.error('Task name cannot contain spaces.')
@@ -551,7 +548,7 @@ class TaskManager(Manager, name='task'):
                     else:
                         raise
 
-            self._unclaim(tx, task_id, self.ident)
+            self._unclaim(tx, task_id)
 
     @description('change task state to "cancelled"')
     @argument('--count-limit', metavar='N', type=int, help='stop after N tasks')
@@ -606,10 +603,9 @@ class TaskManager(Manager, name='task'):
                                     LIMIT 1
                                     FOR UPDATE SKIP LOCKED
                                 )
-                                SELECT id, name, task_claim(id, %s)
+                                SELECT id, name, task_claim(id)
                                 FROM next_task
-                                ''', (self._ts.rlookup('ts_cleaning'),
-                                      self.ident))
+                                ''', (self._ts.rlookup('ts_cleaning'),))
 
                     if len(task) == 0:
                         logger.debug('No tasks found.')
@@ -669,11 +665,10 @@ class TaskManager(Manager, name='task'):
                                     LIMIT 1
                                     FOR UPDATE OF t SKIP LOCKED
                                 )
-                                SELECT id, name, task_claim(id, %s)
+                                SELECT id, name, task_claim(id)
                                 FROM next_task
                                 ''', (self._ts.rlookup('ts_cleanable'),
-                                      self._ts.rlookup('ts_cleanable'),
-                                      self.ident))
+                                      self._ts.rlookup('ts_cleanable')))
 
                     if len(task) == 0:
                         logger.debug('No tasks found.')
@@ -703,14 +698,14 @@ class TaskManager(Manager, name='task'):
                             def direct_dependents(tx):
                                 return tx.execute('''
                                         SELECT td.task_id,
-                                               task_claim(td.task_id, %s),
+                                               task_claim(td.task_id),
                                                ts.pending
                                         FROM task_dependency td
                                         JOIN task t ON t.id = td.task_id
                                         JOIN task_state ts ON ts.id = t.state_id
                                         WHERE td.dependency_id = %s
                                         AND NOT td.soft
-                                        ''', (self.ident, task_id))
+                                        ''', (task_id,))
 
                             any_dependent_claim_failed = False
                             any_dependent_pending = False
@@ -944,11 +939,11 @@ class TaskManager(Manager, name='task'):
         def task(tx):
             return tx.execute('''
                     SELECT t.id, t.state_id, ts.incomplete, t.elapsed_time,
-                           t.max_mem_mb, task_claim(t.id, %s)
+                           t.max_mem_mb, task_claim(t.id)
                     FROM task t
                     JOIN task_state ts ON ts.id = t.state_id
                     WHERE t.name = %s
-                    ''', (self.ident, task_name))
+                    ''', (task_name,))
 
         if len(task) == 0:
             logger.error(f'Task "{task_name}" does not exist.')
@@ -1135,7 +1130,7 @@ class TaskManager(Manager, name='task'):
 
             @self.db.tx
             def F(tx):
-                self._unclaim(tx, task_id, None, force=True)
+                self._unclaim(tx, task_id, force=True)
 
             logger.info(task_name)
 
@@ -1155,9 +1150,9 @@ class TaskManager(Manager, name='task'):
                             LIMIT 1
                             FOR UPDATE SKIP LOCKED
                         )
-                        SELECT id, name, task_claim(id, %s)
+                        SELECT id, name, task_claim(id)
                         FROM failed_task
-                        ''', (self._ts.rlookup('ts_failed'), self.ident))
+                        ''', (self._ts.rlookup('ts_failed'),))
 
             if len(task) == 0:
                 logger.debug('No tasks found.')
@@ -1409,9 +1404,9 @@ class TaskManager(Manager, name='task'):
                             FOR UPDATE SKIP LOCKED
                         )
                         SELECT id, name, elapsed_time, max_mem_mb,
-                               task_claim(id, %s)
+                               task_claim(id)
                         FROM unsynthesized_task
-                        ''', (self._ts.rlookup('ts_done'), self.ident))
+                        ''', (self._ts.rlookup('ts_done'),))
 
             if len(task) == 0:
                 logger.debug('No tasks found.')

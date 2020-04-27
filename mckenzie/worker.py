@@ -81,7 +81,8 @@ class Worker(Instance):
         self.worker_mem_mb = worker_mem_mb
         self.time_end_projected = time_end_projected
 
-        self._ident = self.impersonate(self.slurm_job_id)
+        ident = self.impersonate(self.slurm_job_id)
+        self.db.set_session_parameter('mck.ident', ident)
 
         self.lock = threading.Lock()
 
@@ -171,9 +172,9 @@ class Worker(Instance):
                     )
                     SELECT id, name, mem_limit_mb
                     FROM chosen_task
-                    WHERE task_claim(id, %s)
+                    WHERE task_claim(id)
                     ''', (self._ts.rlookup('ts_ready'), self.remaining_time,
-                          remaining_mem_mb, self.ident))
+                          remaining_mem_mb))
 
         if len(task) == 0:
             return None
@@ -307,7 +308,7 @@ class Worker(Instance):
                               self.slurm_job_id))
 
             # We're completely done with the task, so let it go.
-            TaskManager._unclaim(tx, task_id, self.ident)
+            TaskManager._unclaim(tx, task_id)
 
         self.task_starts.pop(task_name)
         self.task_mems_mb.pop(task_name)
@@ -486,7 +487,7 @@ class Worker(Instance):
                                           self.slurm_job_id))
 
                         # We're completely done with the task, so let it go.
-                        TaskManager._unclaim(tx, task_id, self.ident)
+                        TaskManager._unclaim(tx, task_id)
 
         self.clean_exit = True
         logger.debug('Left pool normally.')
@@ -715,7 +716,7 @@ class WorkerManager(Manager, name='worker'):
                             ''', (task_id, self._ts.rlookup('ts_failed'),
                                   self._tr.rlookup('tr_failure_worker_clean')))
 
-                    TaskManager._unclaim(tx, task_id, ident)
+                    TaskManager._unclaim(tx, task_id, force=True)
 
                     task_names.append(task_name)
 

@@ -124,10 +124,6 @@ class Agent:
         self.conf = mck.conf
         self.db = mck.conf.db
 
-    @property
-    def ident(self):
-        return self._ident
-
 
 class Instance(Agent):
     pass
@@ -172,7 +168,8 @@ class Manager(Agent):
         pid = os.getpid()
         rand = randint(0, 0xff)
         # 00000001 RRRRRRRR PPPPPPPP PPPPPPPP
-        self._ident = (0x01 << 24) | (rand << 16) | (pid & 0xffff)
+        ident = (0x01 << 24) | (rand << 16) | (pid & 0xffff)
+        self.db.set_session_parameter('mck.ident', ident)
 
     def print_table(self, *args, **kwargs):
         print_table(*args, reset_str=self.c('reset'), **kwargs)
