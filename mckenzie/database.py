@@ -211,6 +211,8 @@ class Database:
 
         self.try_to_reconnect = True
 
+        self._session_parameters = {}
+
     @property
     def dbhost(self):
         if self._dbhost is None:
@@ -241,6 +243,13 @@ class Database:
 
             self._conn = psycopg2.connect(**kwargs)
 
+            @self.tx
+            def F(tx):
+                for name, value in self._session_parameters.items():
+                    tx.execute(f'''
+                            SET SESSION {name} = %s
+                            ''', (value,))
+
         return self._conn
 
     def close(self):
@@ -252,6 +261,28 @@ class Database:
 
         self._conn = None
         self._dbhost = None
+
+    @property
+    def connected(self):
+        # If we were connected in the past, but the connection has since
+        # dropped, this will still evaluate to True.
+        return self._conn is not None
+
+    def set_session_parameter(self, name, value):
+        if not name.startswith('mck.'):
+            logger.error('Session parameters must start with "mck.".')
+
+            raise HandledException()
+
+        self._session_parameters[name] = value
+
+        if self.connected:
+            with self.without_reconnect():
+                @self.tx
+                def F(tx):
+                    tx.execute(f'''
+                            SET SESSION {name} = %s
+                            ''', (value,))
 
     def tx(self, f):
         logger.debug('Starting transaction.')
