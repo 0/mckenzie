@@ -26,6 +26,10 @@ class DatabaseError(Exception):
     pass
 
 
+class DatabaseConnectionError(DatabaseError):
+    pass
+
+
 class RaisedException(DatabaseError):
     def __init__(self, message):
         super().__init__()
@@ -272,12 +276,12 @@ class Database:
                     pass
                 elif isinstance(e, (psycopg2.InterfaceError,
                                     psycopg2.OperationalError)):
-                    if not self.try_to_reconnect:
-                        raise
-
-                    # Reconnect before retrying.
                     logger.debug('Forcing disconnect.')
                     self.close()
+
+                    if not self.try_to_reconnect:
+                        raise DatabaseConnectionError()
+
                     logger.debug('Taking a break.')
                     time.sleep(self.RECONNECT_WAIT_SECONDS)
                 else:
@@ -315,7 +319,7 @@ class Database:
                 @self.tx
                 def result(tx):
                     return tx.execute('SELECT 1')
-        except psycopg2.OperationalError:
+        except DatabaseConnectionError:
             success = False
         else:
             success = result == [(1,)]
