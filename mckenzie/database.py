@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 from datetime import datetime, timedelta
-from enum import Enum, IntEnum
+from enum import Enum, IntEnum, auto
 import logging
 from math import ceil
 import os
@@ -42,6 +42,13 @@ class CheckViolation(DatabaseError):
         super().__init__()
 
         self.constraint_name = constraint_name
+
+
+class IsolationLevel(Enum):
+    READ_UNCOMMITTED = auto()
+    READ_COMMITTED = auto()
+    REPEATABLE_READ = auto()
+    SERIALIZABLE = auto()
 
 
 class AdvisoryKey(IntEnum):
@@ -101,6 +108,20 @@ class Transaction:
             self.execute(f'ROLLBACK TO SAVEPOINT {name}')
         else:
             self.curs.connection.rollback()
+
+    def isolate(self, level):
+        if level == IsolationLevel.READ_UNCOMMITTED:
+            self.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
+        elif level == IsolationLevel.READ_COMMITTED:
+            self.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
+        elif level == IsolationLevel.REPEATABLE_READ:
+            self.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
+        elif level == IsolationLevel.SERIALIZABLE:
+            self.execute('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE')
+        else:
+            logger.error('Unrecognized level: {level}')
+
+            raise HandledException()
 
     def _advisory_do(self, action, key, key2=None, *, xact=False, shared=False):
         name_pieces = ['pg', 'advisory']
