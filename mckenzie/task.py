@@ -8,10 +8,11 @@ import subprocess
 from .arguments import argparsable, argument, description
 from .base import (DatabaseNoteView, DatabaseReasonView, DatabaseStateView,
                    Manager)
-from .database import AdvisoryKey, CheckViolation, RaisedException
+from .database import (AdvisoryKey, CheckViolation, IsolationLevel,
+                       RaisedException)
 from .util import DirectedAcyclicGraphNode as DAG
 from .util import (HandledException, check_proc, format_datetime,
-                   format_timedelta)
+                   format_timedelta, humanize_datetime)
 
 
 logger = logging.getLogger(__name__)
@@ -787,6 +788,144 @@ class TaskManager(Manager, name='task'):
                                   self._tr.rlookup('tr_task_cleanablize'),
                                   name_pattern, names, count_limit=count_limit,
                                   time_limit_hr=time_limit_hr)
+
+    @description('show outstanding tasks')
+    def health(self, args):
+        @self.db.tx
+        def ready_tasks(tx):
+            tx.isolate(IsolationLevel.REPEATABLE_READ)
+
+            longest = tx.execute('''
+                    SELECT name, state_id, priority, time_limit, mem_limit_mb
+                    FROM task
+                    WHERE state_id = %s
+                    ORDER BY time_limit DESC, id
+                    LIMIT 5
+                    ''', (self._ts.rlookup('ts_ready'),))
+
+            largest = tx.execute('''
+                    SELECT name, state_id, priority, time_limit, mem_limit_mb
+                    FROM task
+                    WHERE state_id = %s
+                    ORDER BY mem_limit_mb DESC, id
+                    LIMIT 5
+                    ''', (self._ts.rlookup('ts_ready'),))
+
+            return longest, largest
+
+        longest_ready_tasks, largest_ready_tasks = ready_tasks
+
+        if longest_ready_tasks:
+            task_data = []
+
+            for (name, state_id, priority, time_limit,
+                    mem_limit_mb) in longest_ready_tasks:
+                state, state_user, state_color = self._format_state(state_id)
+
+                task_data.append([name, (state_user, state_color), priority,
+                                  time_limit, mem_limit_mb])
+
+            self.print_table(['Name', 'State', 'Priority', 'Time', 'Mem (MB)'],
+                             task_data)
+
+            print()
+
+            task_data = []
+
+            for (name, state_id, priority, time_limit,
+                    mem_limit_mb) in largest_ready_tasks:
+                state, state_user, state_color = self._format_state(state_id)
+
+                task_data.append([name, (state_user, state_color), priority,
+                                  time_limit, mem_limit_mb])
+
+            self.print_table(['Name', 'State', 'Priority', 'Time', 'Mem (MB)'],
+                             task_data)
+        else:
+            print('No ready tasks.')
+
+        print()
+
+        @self.db.tx
+        def claimed_nonworker_tasks(tx):
+            return tx.execute('''
+                    SELECT name, state_id, parse_claim(claimed_by),
+                           claimed_since, NOW() - claimed_since AS claimed_for
+                    FROM task t
+                    WHERE claimed_by IS NOT NULL
+                    AND parse_claim_type(claimed_by) != 'worker'
+                    ORDER BY claimed_for DESC, id
+                    LIMIT 5
+                    ''')
+
+        task_data = []
+
+        for (name, state_id, claimed_by, claimed_since,
+                claimed_for) in claimed_nonworker_tasks:
+            state, state_user, state_color = self._format_state(state_id)
+
+            task_data.append([name, (state_user, state_color), claimed_by,
+                              claimed_since, claimed_for])
+
+        if task_data:
+            self.print_table(['Name', 'State', 'Claimed by', 'Since', 'For'],
+                             task_data)
+        else:
+            print('No tasks claimed by non-workers.')
+
+        print()
+
+        @self.db.tx
+        def blocking_dependencies(tx):
+            return tx.execute('''
+                    SELECT t2.name, COUNT(*) AS count
+                    FROM task t1
+                    JOIN task_state ts1 ON ts1.id = t1.state_id
+                    JOIN task_dependency td ON td.task_id = t1.id
+                    JOIN task t2 ON t2.id = td.dependency_id
+                    JOIN task_state ts2 ON ts2.id = t2.state_id
+                    WHERE ts1.pending
+                    AND ts2.incomplete
+                    AND NOT ts2.pending
+                    GROUP BY t2.name
+                    ORDER BY count DESC
+                    LIMIT 5
+                    ''')
+
+        task_data = []
+
+        for task_name, count in blocking_dependencies:
+            task_data.append([task_name, count])
+
+        if task_data:
+            self.print_table(['Name', 'Blocked dependents'], task_data)
+        else:
+            print('No blocking dependencies.')
+
+        print()
+
+        @self.db.tx
+        def task_note_history(tx):
+            return tx.execute('''
+                    SELECT tnh.id, t.name, tnh.note_id, tnh.time, NOW()
+                    FROM task_note_history tnh
+                    JOIN task t ON t.id = tnh.task_id
+                    ORDER BY tnh.id DESC
+                    LIMIT 5
+                    ''')
+
+        task_data = []
+
+        for history_id, task_name, note_id, time, now in task_note_history:
+            note_desc = self._tn.format(history_id, note_id)
+
+            task_data.append([task_name, note_desc,
+                              humanize_datetime(time, now)])
+
+        if task_data:
+            self.print_table(['Name', 'Note', 'Time'], task_data)
+        else:
+            print('No notes.')
 
     @description('change task state to "held"')
     @argument('--count-limit', metavar='N', type=int, help='stop after N tasks')
