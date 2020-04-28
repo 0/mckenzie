@@ -136,6 +136,7 @@ def list_completed_jobs(name, columns, last, *, log, stacklevel=1):
     proc = subprocess.run(['sacct', '--noheader', '--noconvert',
                            '--parsable2', '--state=CD',
                            '--starttime=' + format_datetime(now - last),
+                           '--endtime=now',
                            '--name=' + name,
                            '--format=' + format_str],
                           capture_output=True, text=True)
