@@ -77,8 +77,6 @@ class SupportManager(Manager, name='support'):
 
         raw_time_starts = []
         support_data = []
-        # Only output the warning once.
-        mem_format_warn = False
 
         for (jobid, state, reason, partition, cpus, time_total, mem,
                 time_start, time_end) in jobs:
@@ -87,13 +85,7 @@ class SupportManager(Manager, name='support'):
 
             cpus = int(cpus)
             time_total = slurm.parse_timedelta(time_total)
-
-            if mem[-1] == 'M' and mem[:-1].isdigit():
-                mem = ceil(int(mem[:-1]) / 1024)
-            else:
-                if not mem_format_warn:
-                    mem_format_warn = True
-                    logger.warning('Invalid memory format.')
+            mem_gb = ceil(slurm.parse_units_mb(mem) / 1024)
 
             try:
                 dt = datetime.fromisoformat(time_start)
@@ -114,7 +106,7 @@ class SupportManager(Manager, name='support'):
                     time_end = humanize_datetime(dt, now)
 
             support_data.append([jobid, state, reason, partition, cpus,
-                                 time_total, mem, time_start, time_end])
+                                 time_total, mem_gb, time_start, time_end])
 
         # Sort by start time.
         sorted_data = [row for (s, row) in sorted(zip(raw_time_starts,
@@ -135,8 +127,6 @@ class SupportManager(Manager, name='support'):
                                          last, log=logger.error)
 
         support_data = []
-        # Only output the warning once.
-        format_warn = False
 
         for (jobid, cpus, cpu_used, cpu_total, mem_used, mem_total, disk_read,
                 disk_write, time_end) in jobs:
@@ -147,48 +137,25 @@ class SupportManager(Manager, name='support'):
 
             jobid = jobid[:-6]
 
+            cpus = int(cpus)
             cpu_used = slurm.parse_timedelta(cpu_used)
             cpu_total = slurm.parse_timedelta(cpu_total)
+            mem_used_gb = ceil(slurm.parse_units_mb(mem_used) / 1024)
+            mem_total_gb = ceil(slurm.parse_units_mb(mem_total[:-1]) / 1024)
 
-            cpus = int(cpus)
-
-            if mem_used[-1] == 'K' and mem_used[:-1].isdigit():
-                mem_used = ceil(int(mem_used[:-1]) / 1024 / 1024)
+            if mem_total[-1] == 'n':
+                # By node.
+                pass
+            elif mem_total[-1] == 'c':
+                # By CPU.
+                mem_total_gb *= cpus
             else:
-                if not format_warn:
-                    format_warn = True
-                    logger.warning('Invalid format.')
+                logger.error('Invalid suffix.')
 
-            if mem_total[-2:] == 'Mn' and mem_total[:-2].isdigit():
-                mem_total = ceil(int(mem_total[:-2]) / 1024)
-            else:
-                if not format_warn:
-                    format_warn = True
-                    logger.warning('Invalid format.')
+                raise HandledException()
 
-            if disk_read[-1] == 'M':
-                try:
-                    disk_read = ceil(float(disk_read[:-1]) / 1024)
-                except ValueError:
-                    if not format_warn:
-                        format_warn = True
-                        logger.warning('Invalid format.')
-            else:
-                if not format_warn:
-                    format_warn = True
-                    logger.warning('Invalid format.')
-
-            if disk_write[-1] == 'M':
-                try:
-                    disk_write = ceil(float(disk_write[:-1]) / 1024)
-                except ValueError:
-                    if not format_warn:
-                        format_warn = True
-                        logger.warning('Invalid format.')
-            else:
-                if not format_warn:
-                    format_warn = True
-                    logger.warning('Invalid format.')
+            disk_read_gb = ceil(slurm.parse_units_mb(disk_read) / 1024)
+            disk_write_gb = ceil(slurm.parse_units_mb(disk_write) / 1024)
 
             try:
                 dt = datetime.fromisoformat(time_end)
@@ -197,8 +164,9 @@ class SupportManager(Manager, name='support'):
             else:
                 time_end = humanize_datetime(dt, now)
 
-            support_data.append([jobid, cpus, cpu_used, cpu_total, mem_used,
-                                 mem_total, disk_read, disk_write, time_end])
+            support_data.append([jobid, cpus, cpu_used, cpu_total, mem_used_gb,
+                                 mem_total_gb, disk_read_gb, disk_write_gb,
+                                 time_end])
 
         self.print_table(['Job ID', 'Cores', ('CPU (U/T)', 2),
                           ('Mem (GB;U/T)', 2), ('Disk (GB;R/W)', 2), 'End'],

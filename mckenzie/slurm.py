@@ -23,6 +23,28 @@ def parse_timedelta(s):
     return timedelta(seconds=total)
 
 
+def parse_units_mb(s):
+    if s[-1] == 'K':
+        multiplier = 1/1024
+        s = s[:-1]
+    elif s[-1] == 'M':
+        multiplier = 1
+        s = s[:-1]
+    elif s[-1] == 'G':
+        multiplier = 1024
+        s = s[:-1]
+    elif s[-1] == 'T':
+        multiplier = 1024 * 1024
+        s = s[:-1]
+    elif s[-1] == 'P':
+        multiplier = 1024 * 1024 * 1024
+        s = s[:-1]
+    else:
+        multiplier = 1/(1024*1024)
+
+    return multiplier * float(s)
+
+
 def check_scancel(proc, *, log, stacklevel=1):
     if 'scancel: Terminating job' in proc.stderr:
         return True
