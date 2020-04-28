@@ -1,7 +1,7 @@
 from concurrent import futures
 from datetime import datetime, timedelta
 import logging
-from math import ceil
+from math import ceil, floor
 import os
 from pathlib import Path
 import shlex
@@ -624,6 +624,63 @@ class WorkerManager(Manager, name='worker'):
                         VALUES (%s, %s, %s)
                         ''', (slurm_job_id, self._ws.rlookup('ws_done'),
                               self._wr.rlookup('wr_worker_ack_failed')))
+
+    @description('list active tasks')
+    @argument('--bar-segments', metavar='S', type=int, default=10, help='number of progress bar segments (default: 10)')
+    @argument('slurm_job_id', nargs='*', type=int, help='Slurm job ID of worker')
+    def active_tasks(self, args):
+        S = args.bar_segments
+        slurm_job_ids = args.slurm_job_id
+
+        @self.db.tx
+        def worker_task(tx):
+            query = '''
+                    SELECT t.name, t.time_limit, wt.worker_id, w.node,
+                           NOW() - wt.time_active AS elapsed_time,
+                           wt.time_active + t.time_limit - NOW() AS remaining_time
+                    FROM worker_task wt
+                    JOIN task t ON t.id = wt.task_id
+                    JOIN worker w ON w.id = wt.worker_id
+                    WHERE wt.active
+                    '''
+            query_args = ()
+
+            if slurm_job_ids:
+                query += ' AND wt.worker_id = ANY (%s)'
+                query_args += (slurm_job_ids,)
+
+            query += '''
+                    ORDER BY remaining_time DESC, t.id
+                    '''
+
+            return tx.execute(query, query_args)
+
+        task_data = []
+
+        for (task_name, time_limit, slurm_job_id, node, elapsed_time,
+                remaining_time) in worker_task:
+            if elapsed_time <= time_limit:
+                progress = floor(elapsed_time / time_limit * S)
+                progress_bar = ('=' * progress) + '>' + ('-' * (S - progress))
+                progress_bar = progress_bar[:-1]
+                progress_color = None
+                percent = ceil(elapsed_time / time_limit * 100)
+                percent_str = f'{percent}%'
+                percent_color = None
+            else:
+                progress_bar = '?' * S
+                progress_color = self.c('warning')
+                percent_str = f'???'
+                percent_color = self.c('warning')
+
+            task_data.append([str(slurm_job_id), node, task_name, elapsed_time,
+                              remaining_time, time_limit,
+                              (progress_bar, progress_color),
+                              (percent_str, percent_color)])
+
+        self.print_table(['Job ID', 'Node', 'Task', ('Time (E/R/T)', 3),
+                          ('Progress', 2)],
+                         task_data)
 
     @description('clean up dead workers')
     @argument('--state', metavar='S', help='only workers in state S')
