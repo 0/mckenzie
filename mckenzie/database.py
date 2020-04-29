@@ -632,35 +632,49 @@ class DatabaseManager(Manager, name='database'):
                     logger.debug(f'Executing "{path}".')
 
                     try:
-                        with open(path) as f:
-                            query = f.read()
+                        if path.endswith('.sql'):
+                            with open(path) as f:
+                                query = f.read()
 
-                        query_args = ()
-                        g = globals().copy()
+                            query_args = ()
+                            g = globals().copy()
 
-                        while True:
-                            try:
-                                idx_start = query.index('{{{')
-                                idx_end = query.index('}}}')
-                            except ValueError:
-                                break
+                            while True:
+                                try:
+                                    idx_start = query.index('{{{')
+                                    idx_end = query.index('}}}')
+                                except ValueError:
+                                    break
 
-                            if query[idx_start+3] == 'V':
-                                r = eval(query[(idx_start+5):idx_end], g)
-                                query = (query[:idx_start]
-                                         + '%s'
-                                         + query[(idx_end+3):])
-                                query_args += (r,)
-                            elif query[idx_start+3] == 'X':
-                                exec(query[(idx_start+5):idx_end], g)
-                                query = query[:idx_start] + query[(idx_end+3):]
-                            else:
-                                logger.error('Invalid specifier: '
-                                             f'{query[idx_start+3]}.')
+                                if query[idx_start+3] == 'V':
+                                    r = eval(query[(idx_start+5):idx_end], g)
+                                    query = (query[:idx_start]
+                                             + '%s'
+                                             + query[(idx_end+3):])
+                                    query_args += (r,)
+                                elif query[idx_start+3] == 'X':
+                                    exec(query[(idx_start+5):idx_end], g)
+                                    query = (query[:idx_start]
+                                             + query[(idx_end+3):])
+                                else:
+                                    logger.error('Invalid specifier: '
+                                                 f'{query[idx_start+3]}.')
 
-                                raise HandledException()
+                                    raise HandledException()
 
-                        tx.execute(query, query_args)
+                            tx.execute(query, query_args)
+                        elif path.endswith('.py'):
+                            with open(path) as f:
+                                script = f.read()
+
+                            g = globals().copy()
+                            g['tx'] = tx
+
+                            exec(script, g)
+                        else:
+                            logger.error('Unrecognized extension.')
+
+                            raise HandledException()
                     except Exception as e:
                         logger.error(path)
 
