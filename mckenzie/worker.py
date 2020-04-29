@@ -1194,23 +1194,23 @@ class WorkerManager(Manager, name='worker'):
         @self.db.tx
         def worker_history(tx):
             return tx.execute('''
-                    SELECT state_id, time,
-                           LEAD(time, 1, NOW()) OVER (ORDER BY time, id),
-                           reason_id
-                    FROM worker_history
-                    WHERE worker_id = %s
-                    ORDER BY id
+                    SELECT wh.state_id, wh.time,
+                           LEAD(wh.time, 1, NOW())
+                               OVER (ORDER BY wh.time, wh.id),
+                           wr.description
+                    FROM worker_history wh
+                    JOIN worker_reason wr ON wr.id = wh.reason_id
+                    WHERE wh.worker_id = %s
+                    ORDER BY wh.id
                     ''', (slurm_job_id,))
 
         worker_data = []
 
-        for state_id, time, time_next, reason_id in worker_history:
+        for state_id, time, time_next, reason in worker_history:
             state_user = self._ws.lookup(state_id, user=True)
-            reason_desc = self._wr.dlookup(reason_id)
-
             duration = time_next - time
 
-            worker_data.append([time, duration, state_user, reason_desc])
+            worker_data.append([time, duration, state_user, reason])
 
         if worker_data:
             self.print_table(['Time', 'Duration', 'State', 'Reason'],

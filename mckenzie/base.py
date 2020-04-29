@@ -15,27 +15,10 @@ class DatabaseNoteView(DatabaseView):
 
         self.history_table_name = history_table_name
 
-        # Mapping from IDs to description formats.
-        self._dict_d = {}
-        # Mapping from IDs to argument types.
-        self._dict_t = {}
-
-        @self.db.tx
-        def notes(tx):
-            return tx.execute(f'''
-                    SELECT id, description_format, arg_types
-                    FROM {table_name}
-                    ORDER BY id
-                    ''')
-
-        for note_id, description_format, arg_types in notes:
-            self._dict_d[note_id] = description_format
-            self._dict_t[note_id] = arg_types
-
-    def format(self, history_id, note_id):
+    def format(self, history_id, description_format, arg_types):
         arg_strings = []
 
-        for i, arg_type in enumerate(self._dict_t[note_id]):
+        for i, arg_type in enumerate(arg_types):
             arg_strings.append(f'note_args[{i+1}]::{arg_type}')
 
         arg_string = ', '.join(arg_strings)
@@ -48,7 +31,7 @@ class DatabaseNoteView(DatabaseView):
                     WHERE id = %s
                     ''', (history_id,))
 
-        return self._dict_d[note_id].format(*map(format_object, args[0]))
+        return description_format.format(*map(format_object, args[0]))
 
 
 class DatabaseReasonView(DatabaseView):
@@ -57,8 +40,6 @@ class DatabaseReasonView(DatabaseView):
 
         # Mapping from names to IDs.
         self._dict_r = {}
-        # Mapping from IDs to descriptions.
-        self._dict_d = {}
 
         @self.db.tx
         def reasons(tx):
@@ -70,13 +51,9 @@ class DatabaseReasonView(DatabaseView):
 
         for reason_id, name, description in reasons:
             self._dict_r[name] = reason_id
-            self._dict_d[reason_id] = description
 
     def rlookup(self, name):
         return self._dict_r[name]
-
-    def dlookup(self, reason_id):
-        return self._dict_d[reason_id]
 
 
 class DatabaseStateView(DatabaseView):

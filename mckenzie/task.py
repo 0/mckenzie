@@ -907,8 +907,10 @@ class TaskManager(Manager, name='task'):
         @self.db.tx
         def task_note_history(tx):
             return tx.execute('''
-                    SELECT tnh.id, t.name, tnh.note_id, tnh.time, NOW()
+                    SELECT tnh.id, tnh.time, tn.description_format,
+                           tn.arg_types, t.name, NOW()
                     FROM task_note_history tnh
+                    JOIN task_note tn ON tn.id = tnh.note_id
                     JOIN task t ON t.id = tnh.task_id
                     ORDER BY tnh.id DESC
                     LIMIT 5
@@ -916,8 +918,10 @@ class TaskManager(Manager, name='task'):
 
         task_data = []
 
-        for history_id, task_name, note_id, time, now in task_note_history:
-            note_desc = self._tn.format(history_id, note_id)
+        for (history_id, time, description_format, arg_types, task_name,
+                now) in task_note_history:
+            note_desc = self._tn.format(history_id, description_format,
+                                        arg_types)
 
             task_data.append([task_name, note_desc,
                               humanize_datetime(time, now)])
@@ -1367,20 +1371,20 @@ class TaskManager(Manager, name='task'):
         @self.db.tx
         def task_history(tx):
             return tx.execute('''
-                    SELECT state_id, time,
-                           LEAD(time, 1, NOW()) OVER (ORDER BY time, id),
-                           reason_id, worker_id
-                    FROM task_history
-                    WHERE task_id = %s
-                    ORDER BY id
+                    SELECT th.state_id, th.time,
+                           LEAD(th.time, 1, NOW())
+                               OVER (ORDER BY th.time, th.id),
+                           th.worker_id, tr.description
+                    FROM task_history th
+                    JOIN task_reason tr ON tr.id = th.reason_id
+                    WHERE th.task_id = %s
+                    ORDER BY th.id
                     ''', (task_id,))
 
         task_data = []
 
-        for state_id, time, time_next, reason_id, worker_id in task_history:
+        for state_id, time, time_next, worker_id, reason in task_history:
             state_user = self._ts.lookup(state_id, user=True)
-            reason_desc = self._tr.dlookup(reason_id)
-
             duration = time_next - time
 
             if worker_id is not None:
@@ -1388,8 +1392,7 @@ class TaskManager(Manager, name='task'):
             else:
                 worker_id = ''
 
-            task_data.append([time, duration, state_user, reason_desc,
-                              worker_id])
+            task_data.append([time, duration, state_user, reason, worker_id])
 
         if task_data:
             self.print_table(['Time', 'Duration', 'State', 'Reason', 'Worker'],
@@ -1402,16 +1405,20 @@ class TaskManager(Manager, name='task'):
         @self.db.tx
         def task_note_history(tx):
             return tx.execute('''
-                    SELECT id, note_id, time
-                    FROM task_note_history
-                    WHERE task_id = %s
-                    ORDER BY id
+                    SELECT tnh.id, tnh.time, tn.description_format,
+                           tn.arg_types
+                    FROM task_note_history tnh
+                    JOIN task_note tn ON tn.id = tnh.note_id
+                    WHERE tnh.task_id = %s
+                    ORDER BY tnh.id
                     ''', (task_id,))
 
         task_data = []
 
-        for history_id, note_id, time in task_note_history:
-            note_desc = self._tn.format(history_id, note_id)
+        for (history_id, time, description_format,
+                arg_types) in task_note_history:
+            note_desc = self._tn.format(history_id, description_format,
+                                        arg_types)
 
             task_data.append([time, note_desc])
 
