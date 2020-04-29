@@ -1,13 +1,13 @@
 from contextlib import ExitStack
 from datetime import datetime, timedelta
+from enum import IntEnum, unique
 from heapq import heappop, heappush
 import logging
 import os
 import subprocess
 
 from .arguments import argparsable, argument, description
-from .base import (DatabaseNoteView, DatabaseReasonView, DatabaseStateView,
-                   Manager)
+from .base import DatabaseNoteView, Manager
 from .database import (AdvisoryKey, CheckViolation, IsolationLevel,
                        RaisedException)
 from .util import DirectedAcyclicGraphNode as DAG
@@ -49,14 +49,57 @@ logger = logging.getLogger(__name__)
 # cleaned: The task has been cleaned.
 
 
-class TaskState(DatabaseStateView):
-    def __init__(self, *args, **kwargs):
-        super().__init__('task_state', 'ts_', *args, **kwargs)
+@unique
+class TaskState(IntEnum):
+    ts_waiting = 1
+    ts_held = 2
+    ts_cancelled = 3
+    ts_ready = 4
+    ts_running = 5
+    ts_failed = 6
+    ts_done = 7
+    ts_synthesized = 8
+    ts_cleanable = 9
+    ts_cleaning = 10
+    ts_cleaned = 11
+
+    def user(s):
+        # Drop "ts_" prefix.
+        return s[3:]
+
+    def unuser(s):
+        return 'ts_' + s
 
 
-class TaskReason(DatabaseReasonView):
-    def __init__(self, *args, **kwargs):
-        super().__init__('task_reason', *args, **kwargs)
+@unique
+class TaskReason(IntEnum):
+    tr_task_add = 1
+    tr_task_cancel = 2
+    tr_task_uncancel = 3
+    tr_task_hold = 4
+    tr_task_release = 5
+    tr_ready = 6
+    tr_waiting_dep = 7
+    tr_running = 8
+    tr_failure_exit_code = 9
+    tr_failure_string = 10
+    tr_failure_abort = 11
+    tr_failure_worker_clean = 12
+    tr_failure_run = 13
+    tr_failure_memory = 14
+    tr_limit_retry = 15
+    tr_task_reset_failed = 16
+    tr_success = 17
+    tr_task_synthesize = 18
+    tr_task_cleanablize = 19
+    tr_task_uncleanablize = 20
+    tr_task_clean_cleaning = 21
+    tr_task_clean_cleaned = 22
+    tr_task_rerun_synthesize = 23
+    tr_task_rerun_cleanablize = 24
+    tr_task_rerun_cleaning = 25
+    tr_task_rerun_cleaned = 26
+    tr_task_rerun_reset = 27
 
 
 class TaskNote(DatabaseNoteView):
@@ -178,13 +221,11 @@ class TaskManager(Manager, name='task'):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self._ts = TaskState(self.db)
-        self._tr = TaskReason(self.db)
         self._tn = TaskNote(self.db)
 
     def _format_state(self, state_id):
-        state = self._ts.lookup(state_id)
-        state_user = self._ts.lookup(state_id, user=True)
+        state = TaskState(state_id).name
+        state_user = TaskState.user(state)
         color = None
 
         if state == 'ts_failed':
@@ -203,7 +244,7 @@ class TaskManager(Manager, name='task'):
             return None
 
         try:
-            return self._ts.rlookup(state_name, user=True)
+            return TaskState[TaskState.unuser(state_name)]
         except KeyError:
             logger.error(f'Invalid state "{state_name}".')
 
@@ -246,7 +287,7 @@ class TaskManager(Manager, name='task'):
                         continue
 
                     task_id, state_id, transition, claim_success = task[0]
-                    state_user = self._ts.lookup(state_id, user=True)
+                    state_user = TaskState.user(TaskState(state_id).name)
 
                     if not claim_success:
                         logger.warning(f'Task "{task_name}" could not be '
@@ -303,7 +344,7 @@ class TaskManager(Manager, name='task'):
                         break
 
                     task_id, task_name, state_id, claim_success = task[0]
-                    state_user = self._ts.lookup(state_id, user=True)
+                    state_user = TaskState.user(TaskState(state_id).name)
 
                     if not claim_success:
                         logger.debug(f'Failed to claim task "{task_name}".')
@@ -482,8 +523,8 @@ class TaskManager(Manager, name='task'):
                         VALUES (%s, %s, %s, %s, %s)
                         ON CONFLICT (name) DO NOTHING
                         RETURNING id, task_claim(id)
-                        ''', (name, self._ts.rlookup('ts_waiting'), priority,
-                              time_limit, mem_limit_mb))
+                        ''', (name, TaskState.ts_waiting, priority, time_limit,
+                              mem_limit_mb))
             except CheckViolation as e:
                 if e.constraint_name == 'name_spaces':
                     logger.error('Task name cannot contain spaces.')
@@ -504,8 +545,8 @@ class TaskManager(Manager, name='task'):
             tx.execute('''
                     INSERT INTO task_history (task_id, state_id, reason_id)
                     VALUES (%s, %s, %s)
-                    ''', (task_id, self._ts.rlookup('ts_waiting'),
-                          self._tr.rlookup('tr_task_add')))
+                    ''', (task_id, TaskState.ts_waiting,
+                          TaskReason.tr_task_add))
 
             dependency_ids = []
             dependency_ids_mod = []
@@ -563,8 +604,8 @@ class TaskManager(Manager, name='task'):
         names = args.name
 
         self._simple_state_change(None,
-                                  self._ts.rlookup('ts_cancelled'),
-                                  self._tr.rlookup('tr_task_cancel'),
+                                  TaskState.ts_cancelled,
+                                  TaskReason.tr_task_cancel,
                                   name_pattern, names, count_limit=count_limit,
                                   time_limit_hr=time_limit_hr)
 
@@ -606,7 +647,7 @@ class TaskManager(Manager, name='task'):
                                 )
                                 SELECT id, name, task_claim(id)
                                 FROM next_task
-                                ''', (self._ts.rlookup('ts_cleaning'),))
+                                ''', (TaskState.ts_cleaning,))
 
                     if len(task) == 0:
                         logger.debug('No tasks found.')
@@ -668,8 +709,8 @@ class TaskManager(Manager, name='task'):
                                 )
                                 SELECT id, name, task_claim(id)
                                 FROM next_task
-                                ''', (self._ts.rlookup('ts_cleanable'),
-                                      self._ts.rlookup('ts_cleanable')))
+                                ''', (TaskState.ts_cleanable,
+                                      TaskState.ts_cleanable))
 
                     if len(task) == 0:
                         logger.debug('No tasks found.')
@@ -749,9 +790,8 @@ class TaskManager(Manager, name='task'):
                                                                   state_id,
                                                                   reason_id)
                                         VALUES (%s, %s, %s)
-                                        ''', (task_id,
-                                              self._ts.rlookup('ts_cleaning'),
-                                              self._tr.rlookup('tr_task_clean_cleaning')))
+                                        ''', (task_id, TaskState.ts_cleaning,
+                                              TaskReason.tr_task_clean_cleaning))
 
                 logger.info(task_name)
                 logger.debug('Updating task.')
@@ -765,8 +805,8 @@ class TaskManager(Manager, name='task'):
                             INSERT INTO task_history (task_id, state_id,
                                                       reason_id)
                             VALUES (%s, %s, %s)
-                            ''', (task_id, self._ts.rlookup('ts_cleaned'),
-                                  self._tr.rlookup('tr_task_clean_cleaned')))
+                            ''', (task_id, TaskState.ts_cleaned,
+                                  TaskReason.tr_task_clean_cleaned))
 
             lc.count()
 
@@ -784,8 +824,8 @@ class TaskManager(Manager, name='task'):
         names = args.name
 
         self._simple_state_change(None,
-                                  self._ts.rlookup('ts_cleanable'),
-                                  self._tr.rlookup('tr_task_cleanablize'),
+                                  TaskState.ts_cleanable,
+                                  TaskReason.tr_task_cleanablize,
                                   name_pattern, names, count_limit=count_limit,
                                   time_limit_hr=time_limit_hr)
 
@@ -801,7 +841,7 @@ class TaskManager(Manager, name='task'):
                     WHERE state_id = %s
                     ORDER BY time_limit DESC, id
                     LIMIT 5
-                    ''', (self._ts.rlookup('ts_ready'),))
+                    ''', (TaskState.ts_ready,))
 
             largest = tx.execute('''
                     SELECT name, state_id, priority, time_limit, mem_limit_mb
@@ -809,7 +849,7 @@ class TaskManager(Manager, name='task'):
                     WHERE state_id = %s
                     ORDER BY mem_limit_mb DESC, id
                     LIMIT 5
-                    ''', (self._ts.rlookup('ts_ready'),))
+                    ''', (TaskState.ts_ready,))
 
             return longest, largest
 
@@ -943,8 +983,8 @@ class TaskManager(Manager, name='task'):
         names = args.name
 
         self._simple_state_change(None,
-                                  self._ts.rlookup('ts_held'),
-                                  self._tr.rlookup('tr_task_hold'),
+                                  TaskState.ts_held,
+                                  TaskReason.tr_task_hold,
                                   name_pattern, names, count_limit=count_limit,
                                   time_limit_hr=time_limit_hr)
 
@@ -1048,7 +1088,7 @@ class TaskManager(Manager, name='task'):
         task_data = []
 
         for name, state_id, claimed_by, claimed_since, claimed_for in tasks:
-            state_user = self._ts.lookup(state_id, user=True)
+            state_user = TaskState.user(TaskState(state_id).name)
 
             task_data.append([name, state_user, claimed_by, claimed_since,
                               claimed_for])
@@ -1067,9 +1107,9 @@ class TaskManager(Manager, name='task'):
         name_pattern = args.name_pattern
         names = args.name
 
-        self._simple_state_change(self._ts.rlookup('ts_held'),
-                                  self._ts.rlookup('ts_waiting'),
-                                  self._tr.rlookup('tr_task_release'),
+        self._simple_state_change(TaskState.ts_held,
+                                  TaskState.ts_waiting,
+                                  TaskReason.tr_task_release,
                                   name_pattern, names, count_limit=count_limit,
                                   time_limit_hr=time_limit_hr)
 
@@ -1102,7 +1142,7 @@ class TaskManager(Manager, name='task'):
             return
 
         with ClaimStack(self, init_task_ids=[task_id]) as cs:
-            state_user = self._ts.lookup(state_id, user=True)
+            state_user = TaskState.user(TaskState(state_id).name)
 
             if incomplete:
                 logger.warning(f'Task "{task_name}" is in state {state_user}.')
@@ -1132,8 +1172,8 @@ class TaskManager(Manager, name='task'):
                         max_mem_mb) in task_list:
                     logger.info(task_name)
 
-                    state = self._ts.lookup(state_id)
-                    state_user = self._ts.lookup(state_id, user=True)
+                    state = TaskState(state_id).name
+                    state_user = TaskState.user(state)
 
                     if state not in ['ts_done', 'ts_synthesized',
                                      'ts_cleanable', 'ts_cleaning',
@@ -1161,9 +1201,8 @@ class TaskManager(Manager, name='task'):
                                                               state_id,
                                                               reason_id)
                                     VALUES (%s, %s, %s)
-                                    ''', (task_id,
-                                          self._ts.rlookup('ts_synthesized'),
-                                          self._tr.rlookup('tr_task_rerun_synthesize')))
+                                    ''', (task_id, TaskState.ts_synthesized,
+                                          TaskReason.tr_task_rerun_synthesize))
 
                         state = 'ts_synthesized'
 
@@ -1177,9 +1216,8 @@ class TaskManager(Manager, name='task'):
                                                               state_id,
                                                               reason_id)
                                     VALUES (%s, %s, %s)
-                                    ''', (task_id,
-                                          self._ts.rlookup('ts_cleanable'),
-                                          self._tr.rlookup('tr_task_rerun_cleanablize')))
+                                    ''', (task_id, TaskState.ts_cleanable,
+                                          TaskReason.tr_task_rerun_cleanablize))
 
                         state = 'ts_cleanable'
 
@@ -1193,9 +1231,8 @@ class TaskManager(Manager, name='task'):
                                                               state_id,
                                                               reason_id)
                                     VALUES (%s, %s, %s)
-                                    ''', (task_id,
-                                          self._ts.rlookup('ts_cleaning'),
-                                          self._tr.rlookup('tr_task_rerun_cleaning')))
+                                    ''', (task_id, TaskState.ts_cleaning,
+                                          TaskReason.tr_task_rerun_cleaning))
 
                         state = 'ts_cleaning'
 
@@ -1212,9 +1249,8 @@ class TaskManager(Manager, name='task'):
                                                               state_id,
                                                               reason_id)
                                     VALUES (%s, %s, %s)
-                                    ''', (task_id,
-                                          self._ts.rlookup('ts_cleaned'),
-                                          self._tr.rlookup('tr_task_rerun_cleaned')))
+                                    ''', (task_id, TaskState.ts_cleaned,
+                                          TaskReason.tr_task_rerun_cleaned))
 
                         state = 'ts_cleaned'
 
@@ -1231,9 +1267,8 @@ class TaskManager(Manager, name='task'):
                                                               state_id,
                                                               reason_id)
                                     VALUES (%s, %s, %s)
-                                    ''', (task_id,
-                                          self._ts.rlookup('ts_waiting'),
-                                          self._tr.rlookup('tr_task_rerun_reset')))
+                                    ''', (task_id, TaskState.ts_waiting,
+                                          TaskReason.tr_task_rerun_reset))
 
                         if not self._scrub(self.conf, task_name):
                             return
@@ -1295,7 +1330,7 @@ class TaskManager(Manager, name='task'):
                         )
                         SELECT id, name, task_claim(id)
                         FROM failed_task
-                        ''', (self._ts.rlookup('ts_failed'),))
+                        ''', (TaskState.ts_failed,))
 
             if len(task) == 0:
                 logger.debug('No tasks found.')
@@ -1325,8 +1360,8 @@ class TaskManager(Manager, name='task'):
                             INSERT INTO task_history (task_id, state_id,
                                                       reason_id)
                             VALUES (%s, %s, %s)
-                            ''', (task_id, self._ts.rlookup('ts_waiting'),
-                                  self._tr.rlookup('tr_task_reset_failed')))
+                            ''', (task_id, TaskState.ts_waiting,
+                                  TaskReason.tr_task_reset_failed))
 
                 logger.debug('Running scrub command.')
 
@@ -1384,7 +1419,7 @@ class TaskManager(Manager, name='task'):
         task_data = []
 
         for state_id, time, time_next, worker_id, reason in task_history:
-            state_user = self._ts.lookup(state_id, user=True)
+            state_user = TaskState.user(TaskState(state_id).name)
             duration = time_next - time
 
             if worker_id is not None:
@@ -1472,7 +1507,7 @@ class TaskManager(Manager, name='task'):
         task_data = []
 
         for dependency_name, state_id in task_dependency:
-            state_user = self._ts.lookup(state_id, user=True)
+            state_user = TaskState.user(TaskState(state_id).name)
 
             task_data.append([dependency_name, state_user])
 
@@ -1552,7 +1587,7 @@ class TaskManager(Manager, name='task'):
                         SELECT id, name, elapsed_time, max_mem_mb,
                                task_claim(id)
                         FROM unsynthesized_task
-                        ''', (self._ts.rlookup('ts_done'),))
+                        ''', (TaskState.ts_done,))
 
             if len(task) == 0:
                 logger.debug('No tasks found.')
@@ -1586,8 +1621,8 @@ class TaskManager(Manager, name='task'):
                             INSERT INTO task_history (task_id, state_id,
                                                       reason_id)
                             VALUES (%s, %s, %s)
-                            ''', (task_id, self._ts.rlookup('ts_synthesized'),
-                                  self._tr.rlookup('tr_task_synthesize')))
+                            ''', (task_id, TaskState.ts_synthesized,
+                                  TaskReason.tr_task_synthesize))
 
             lc.count()
 
@@ -1604,9 +1639,9 @@ class TaskManager(Manager, name='task'):
         name_pattern = args.name_pattern
         names = args.name
 
-        self._simple_state_change(self._ts.rlookup('ts_cancelled'),
-                                  self._ts.rlookup('ts_waiting'),
-                                  self._tr.rlookup('tr_task_uncancel'),
+        self._simple_state_change(TaskState.ts_cancelled,
+                                  TaskState.ts_waiting,
+                                  TaskReason.tr_task_uncancel,
                                   name_pattern, names, count_limit=count_limit,
                                   time_limit_hr=time_limit_hr)
 
@@ -1621,8 +1656,8 @@ class TaskManager(Manager, name='task'):
         name_pattern = args.name_pattern
         names = args.name
 
-        self._simple_state_change(self._ts.rlookup('ts_cleanable'),
-                                  self._ts.rlookup('ts_synthesized'),
-                                  self._tr.rlookup('tr_task_uncleanablize'),
+        self._simple_state_change(TaskState.ts_cleanable,
+                                  TaskState.ts_synthesized,
+                                  TaskReason.tr_task_uncleanablize,
                                   name_pattern, names, count_limit=count_limit,
                                   time_limit_hr=time_limit_hr)

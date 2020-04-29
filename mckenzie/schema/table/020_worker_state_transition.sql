@@ -1,3 +1,6 @@
+{{{X from .worker import WorkerState}}}
+
+
 CREATE TABLE IF NOT EXISTS worker_state_transition
 (
 	id SERIAL PRIMARY KEY,
@@ -10,20 +13,12 @@ CREATE TABLE IF NOT EXISTS worker_state_transition
 
 INSERT INTO worker_state_transition (from_state_id, to_state_id)
 VALUES
-	((SELECT id FROM worker_state WHERE name = 'ws_queued'),
-		(SELECT id FROM worker_state WHERE name = 'ws_cancelled')),
-	((SELECT id FROM worker_state WHERE name = 'ws_queued'),
-		(SELECT id FROM worker_state WHERE name = 'ws_failed')),
-	((SELECT id FROM worker_state WHERE name = 'ws_queued'),
-		(SELECT id FROM worker_state WHERE name = 'ws_running')),
-	((SELECT id FROM worker_state WHERE name = 'ws_running'),
-		(SELECT id FROM worker_state WHERE name = 'ws_failed')),
-	((SELECT id FROM worker_state WHERE name = 'ws_running'),
-		(SELECT id FROM worker_state WHERE name = 'ws_quitting')),
-	((SELECT id FROM worker_state WHERE name = 'ws_quitting'),
-		(SELECT id FROM worker_state WHERE name = 'ws_failed')),
-	((SELECT id FROM worker_state WHERE name = 'ws_quitting'),
-		(SELECT id FROM worker_state WHERE name = 'ws_done')),
-	((SELECT id FROM worker_state WHERE name = 'ws_failed'),
-		(SELECT id FROM worker_state WHERE name = 'ws_done'))
+	({{{V WorkerState.ws_queued}}}, {{{V WorkerState.ws_cancelled}}}),
+	({{{V WorkerState.ws_queued}}}, {{{V WorkerState.ws_failed}}}),
+	({{{V WorkerState.ws_queued}}}, {{{V WorkerState.ws_running}}}),
+	({{{V WorkerState.ws_running}}}, {{{V WorkerState.ws_failed}}}),
+	({{{V WorkerState.ws_running}}}, {{{V WorkerState.ws_quitting}}}),
+	({{{V WorkerState.ws_quitting}}}, {{{V WorkerState.ws_failed}}}),
+	({{{V WorkerState.ws_quitting}}}, {{{V WorkerState.ws_done}}}),
+	({{{V WorkerState.ws_failed}}}, {{{V WorkerState.ws_done}}})
 ON CONFLICT (from_state_id, to_state_id) DO NOTHING;

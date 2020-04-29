@@ -1,5 +1,6 @@
 from concurrent import futures
 from datetime import datetime, timedelta
+from enum import IntEnum, unique
 import logging
 from math import ceil, floor
 import os
@@ -12,7 +13,7 @@ from time import sleep
 
 from . import slurm
 from .arguments import argparsable, argument, description
-from .base import DatabaseReasonView, DatabaseStateView, Instance, Manager
+from .base import Instance, Manager
 from .task import TaskManager, TaskReason, TaskState
 from .util import HandledException, humanize_datetime, mem_rss_mb
 
@@ -43,14 +44,36 @@ logger = logging.getLogger(__name__)
 #       acknowledged.
 
 
-class WorkerState(DatabaseStateView):
-    def __init__(self, *args, **kwargs):
-        super().__init__('worker_state', 'ws_', *args, **kwargs)
+@unique
+class WorkerState(IntEnum):
+    ws_queued = 1
+    ws_running = 2
+    ws_quitting = 3
+    ws_cancelled = 4
+    ws_failed = 5
+    ws_done = 6
+
+    def user(s):
+        # Drop "ws_" prefix.
+        return s[3:]
+
+    def unuser(s):
+        return 'ws_' + s
 
 
-class WorkerReason(DatabaseReasonView):
-    def __init__(self, *args, **kwargs):
-        super().__init__('worker_reason', *args, **kwargs)
+@unique
+class WorkerReason(IntEnum):
+    wr_worker_spawn = 1
+    wr_worker_quit_cancelled = 2
+    wr_start = 3
+    wr_quit = 4
+    wr_success = 5
+    wr_success_idle = 6
+    wr_success_abort = 7
+    wr_failure = 8
+    wr_worker_ack_failed = 9
+    wr_worker_clean_queued = 10
+    wr_worker_clean_running = 11
 
 
 class Worker(Instance):
@@ -85,12 +108,6 @@ class Worker(Instance):
         self.db.set_session_parameter('mck.ident', ident)
 
         self.lock = threading.Lock()
-
-        self._ws = WorkerState(self.db)
-        self._wr = WorkerReason(self.db)
-
-        self._ts = TaskState(self.db)
-        self._tr = TaskReason(self.db)
 
         # All the tasks have finished (or will be killed) and worker can exit.
         self.done = False
@@ -141,8 +158,8 @@ class Worker(Instance):
             tx.execute('''
                     INSERT INTO worker_history (worker_id, state_id, reason_id)
                     VALUES (%s, %s, %s)
-                    ''', (self.slurm_job_id, self._ws.rlookup('ws_quitting'),
-                          self._wr.rlookup('wr_quit')))
+                    ''', (self.slurm_job_id, WorkerState.ws_quitting,
+                          WorkerReason.wr_quit))
 
     def abort(self, signum=None, frame=None):
         logger.info('Aborting.')
@@ -173,7 +190,7 @@ class Worker(Instance):
                     SELECT id, name, mem_limit_mb
                     FROM chosen_task
                     WHERE task_claim(id)
-                    ''', (self._ts.rlookup('ts_ready'), self.remaining_time,
+                    ''', (TaskState.ts_ready, self.remaining_time,
                           remaining_mem_mb))
 
         if len(task) == 0:
@@ -187,8 +204,8 @@ class Worker(Instance):
                     INSERT INTO task_history (task_id, state_id, reason_id,
                                               worker_id)
                     VALUES (%s, %s, %s, %s)
-                    ''', (task_id, self._ts.rlookup('ts_running'),
-                          self._tr.rlookup('tr_running'), self.slurm_job_id))
+                    ''', (task_id, TaskState.ts_running, TaskReason.tr_running,
+                          self.slurm_job_id))
 
         return task_id, task_name, task_mem_mb
 
@@ -239,21 +256,21 @@ class Worker(Instance):
             ss = self.conf.worker_success_string
 
             if output and output[-1] == ss:
-                reason_id = self._tr.rlookup('tr_success')
+                reason_id = TaskReason.tr_success
             else:
                 success = False
-                reason_id = self._tr.rlookup('tr_failure_string')
+                reason_id = TaskReason.tr_failure_string
         elif not task_ran:
-            reason_id = self._tr.rlookup('tr_failure_run')
+            reason_id = TaskReason.tr_failure_run
         elif task_name in self.overmemory_mb:
-            reason_id = self._tr.rlookup('tr_failure_memory')
+            reason_id = TaskReason.tr_failure_memory
         else:
-            reason_id = self._tr.rlookup('tr_failure_exit_code')
+            reason_id = TaskReason.tr_failure_exit_code
 
         if success:
-            state_id = self._ts.rlookup('ts_done')
+            state_id = TaskState.ts_done
         else:
-            state_id = self._ts.rlookup('ts_failed')
+            state_id = TaskState.ts_failed
 
         logger.debug(f'"{task_name}": {success}')
 
@@ -303,9 +320,8 @@ class Worker(Instance):
                         INSERT INTO task_history (task_id, state_id, reason_id,
                                                   worker_id)
                         VALUES (%s, %s, %s, %s)
-                        ''', (task_id, self._ts.rlookup('ts_waiting'),
-                              self._tr.rlookup('tr_limit_retry'),
-                              self.slurm_job_id))
+                        ''', (task_id, TaskState.ts_waiting,
+                              TaskReason.tr_limit_retry, self.slurm_job_id))
 
             # We're completely done with the task, so let it go.
             TaskManager._unclaim(tx, task_id)
@@ -468,8 +484,8 @@ class Worker(Instance):
                                 INSERT INTO task_history (task_id, state_id,
                                                           reason_id, worker_id)
                                 VALUES (%s, %s, %s, %s)
-                                ''', (task_id, self._ts.rlookup('ts_failed'),
-                                      self._tr.rlookup('tr_failure_abort'),
+                                ''', (task_id, TaskState.ts_failed,
+                                      TaskReason.tr_failure_abort,
                                       self.slurm_job_id))
 
                         if TaskManager._clean(self.conf, task_name):
@@ -481,9 +497,8 @@ class Worker(Instance):
                                                               reason_id,
                                                               worker_id)
                                     VALUES (%s, %s, %s, %s)
-                                    ''', (task_id,
-                                          self._ts.rlookup('ts_waiting'),
-                                          self._tr.rlookup('tr_limit_retry'),
+                                    ''', (task_id, TaskState.ts_waiting,
+                                          TaskReason.tr_limit_retry,
                                           self.slurm_job_id))
 
                         # We're completely done with the task, so let it go.
@@ -510,18 +525,9 @@ class WorkerManager(Manager, name='worker'):
     STATE_ORDER = ['cancelled', 'queued', 'running', 'running (?)', 'quitting',
                    'quitting (?)', 'failed', 'done']
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        self._ws = WorkerState(self.db)
-        self._wr = WorkerReason(self.db)
-
-        self._ts = TaskState(self.db)
-        self._tr = TaskReason(self.db)
-
     def _format_state(self, state_id, job_running, timeout):
-        state = self._ws.lookup(state_id)
-        state_user = self._ws.lookup(state_id, user=True)
+        state = WorkerState(state_id).name
+        state_user = WorkerState.user(state)
         color = None
 
         if job_running and timeout:
@@ -539,7 +545,7 @@ class WorkerManager(Manager, name='worker'):
             return None
 
         try:
-            return self._ws.rlookup(state_name, user=True)
+            return WorkerState[WorkerState.unuser(state_name)]
         except KeyError:
             logger.error(f'Invalid state "{state_name}".')
 
@@ -608,7 +614,7 @@ class WorkerManager(Manager, name='worker'):
                     SELECT id
                     FROM worker
                     WHERE state_id = %s
-                    ''', (self._ws.rlookup('ws_failed'),))
+                    ''', (WorkerState.ws_failed,))
 
         for slurm_job_id, in workers:
             if self.mck.interrupted:
@@ -622,8 +628,8 @@ class WorkerManager(Manager, name='worker'):
                         INSERT INTO worker_history (worker_id, state_id,
                                                     reason_id)
                         VALUES (%s, %s, %s)
-                        ''', (slurm_job_id, self._ws.rlookup('ws_done'),
-                              self._wr.rlookup('wr_worker_ack_failed')))
+                        ''', (slurm_job_id, WorkerState.ws_done,
+                              WorkerReason.wr_worker_ack_failed))
 
     @description('list active tasks')
     @argument('--bar-segments', metavar='S', type=int, default=10, help='number of progress bar segments (default: 10)')
@@ -725,15 +731,15 @@ class WorkerManager(Manager, name='worker'):
 
                 slurm_job_id, worker_state_id, job_running = worker[0]
                 ident = Worker.impersonate(slurm_job_id)
-                state = self._ws.lookup(worker_state_id)
-                state_user = self._ws.lookup(worker_state_id, user=True)
+                state = WorkerState(worker_state_id).name
+                state_user = WorkerState.user(state)
 
                 logger.debug(f'Cleaning worker {slurm_job_id}.')
 
                 if job_running:
-                    reason_id = self._wr.rlookup('wr_worker_clean_running')
+                    reason_id = WorkerReason.wr_worker_clean_running
                 elif state == 'ws_queued':
-                    reason_id = self._wr.rlookup('wr_worker_clean_queued')
+                    reason_id = WorkerReason.wr_worker_clean_queued
                 else:
                     logger.error(f'Worker {slurm_job_id} is in state '
                                  f'"{state_user}".')
@@ -770,8 +776,8 @@ class WorkerManager(Manager, name='worker'):
                             INSERT INTO task_history (task_id, state_id,
                                                       reason_id)
                             VALUES (%s, %s, %s)
-                            ''', (task_id, self._ts.rlookup('ts_failed'),
-                                  self._tr.rlookup('tr_failure_worker_clean')))
+                            ''', (task_id, TaskState.ts_failed,
+                                  TaskReason.tr_failure_worker_clean))
 
                     TaskManager._unclaim(tx, task_id, force=True)
 
@@ -788,8 +794,7 @@ class WorkerManager(Manager, name='worker'):
                         INSERT INTO worker_history (worker_id, state_id,
                                                     reason_id)
                         VALUES (%s, %s, %s)
-                        ''', (slurm_job_id, self._ws.rlookup('ws_failed'),
-                              reason_id))
+                        ''', (slurm_job_id, WorkerState.ws_failed, reason_id))
 
                 return slurm_job_id, task_names
 
@@ -831,14 +836,14 @@ class WorkerManager(Manager, name='worker'):
                 query_args += (state_id,)
             else:
                 query += ' WHERE (ws.job_running OR w.state_id = %s)'
-                query_args += (self._ws.rlookup('ws_failed'),)
+                query_args += (WorkerState.ws_failed,)
 
             # Order by remaining time, putting failed workers at the bottom.
             query += '''
                     ORDER BY w.state_id = %s,
                              w.time_start + w.time_limit - NOW() DESC
                     '''
-            query_args += (self._ws.rlookup('ws_failed'),)
+            query_args += (WorkerState.ws_failed,)
 
             return tx.execute(query, query_args)
 
@@ -975,7 +980,7 @@ class WorkerManager(Manager, name='worker'):
                     GROUP BY num_cores, time_limit, mem_limit_mb
                     ORDER BY MAX(time_start) NULLS FIRST,
                              num_cores, time_limit, mem_limit_mb
-                    ''', (self._ws.rlookup('ws_queued'),))
+                    ''', (WorkerState.ws_queued,))
 
         worker_data = []
 
@@ -1066,9 +1071,8 @@ class WorkerManager(Manager, name='worker'):
                                                             state_id,
                                                             reason_id)
                                 VALUES (%s, %s, %s)
-                                ''', (slurm_job_id,
-                                      self._ws.rlookup('ws_cancelled'),
-                                      self._wr.rlookup('wr_worker_quit_cancelled')))
+                                ''', (slurm_job_id, WorkerState.ws_cancelled,
+                                      WorkerReason.wr_worker_quit_cancelled))
 
     @description('run worker inside Slurm job')
     def run(self, args):
@@ -1103,8 +1107,8 @@ class WorkerManager(Manager, name='worker'):
             tx.execute('''
                     INSERT INTO worker_history (worker_id, state_id, reason_id)
                     VALUES (%s, %s, %s)
-                    ''', (slurm_job_id, self._ws.rlookup('ws_running'),
-                          self._wr.rlookup('wr_start')))
+                    ''', (slurm_job_id, WorkerState.ws_running,
+                          WorkerReason.wr_start))
 
             return time_limit
 
@@ -1132,17 +1136,17 @@ class WorkerManager(Manager, name='worker'):
             signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
             if not worker.clean_exit:
-                state_id = self._ws.rlookup('ws_failed')
-                reason_id = self._wr.rlookup('wr_failure')
+                state_id = WorkerState.ws_failed
+                reason_id = WorkerReason.wr_failure
             else:
-                state_id = self._ws.rlookup('ws_done')
+                state_id = WorkerState.ws_done
 
                 if worker.done_due_to_abort:
-                    reason_id = self._wr.rlookup('wr_success_abort')
+                    reason_id = WorkerReason.wr_success_abort
                 elif worker.done_due_to_idle:
-                    reason_id = self._wr.rlookup('wr_success_idle')
+                    reason_id = WorkerReason.wr_success_idle
                 else:
-                    reason_id = self._wr.rlookup('wr_success')
+                    reason_id = WorkerReason.wr_success
 
             @self.db.tx
             def F(tx):
@@ -1207,7 +1211,7 @@ class WorkerManager(Manager, name='worker'):
         worker_data = []
 
         for state_id, time, time_next, reason in worker_history:
-            state_user = self._ws.lookup(state_id, user=True)
+            state_user = WorkerState.user(WorkerState(state_id).name)
             duration = time_next - time
 
             worker_data.append([time, duration, state_user, reason])
@@ -1358,15 +1362,15 @@ class WorkerManager(Manager, name='worker'):
                         INSERT INTO worker (id, state_id, num_cores,
                                             time_limit, mem_limit_mb)
                         VALUES (%s, %s, %s, %s, %s)
-                        ''', (slurm_job_id, self._ws.rlookup('ws_queued'),
-                              worker_cpus, worker_time, worker_mem_mb))
+                        ''', (slurm_job_id, WorkerState.ws_queued, worker_cpus,
+                              worker_time, worker_mem_mb))
 
                 tx.execute('''
                         INSERT INTO worker_history (worker_id, state_id,
                                                     reason_id)
                         VALUES (%s, %s, %s)
-                        ''', (slurm_job_id, self._ws.rlookup('ws_queued'),
-                              self._wr.rlookup('wr_worker_spawn')))
+                        ''', (slurm_job_id, WorkerState.ws_queued,
+                              WorkerReason.wr_worker_spawn))
 
             logger.debug(f'Releasing worker job {slurm_job_id}.')
             slurm.release_job(slurm_job_id, log=logger.error)

@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS worker_reason
+(
+	id INTEGER PRIMARY KEY,
+	name TEXT NOT NULL UNIQUE,
+	description TEXT NOT NULL
+);

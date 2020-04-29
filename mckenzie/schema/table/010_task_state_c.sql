@@ -1,35 +1,3 @@
-CREATE TABLE IF NOT EXISTS task_state
-(
-	id SERIAL PRIMARY KEY,
-	name TEXT NOT NULL UNIQUE,
-	-- Tasks in the state must be handled manually.
-	exceptional BOOLEAN NOT NULL DEFAULT FALSE,
-	-- Tasks in the state have run successfully and not been cleaned.
-	satisfies_dependency BOOLEAN NOT NULL DEFAULT FALSE,
-	-- Tasks in the state have run successfully, but may have been cleaned.
-	satisfies_soft_dependency BOOLEAN NOT NULL DEFAULT FALSE,
-	-- Tasks in the state are expected to complete successfully in the future.
-	pending BOOLEAN NOT NULL DEFAULT TRUE,
-	-- Tasks in the state have not yet run successfully.
-	incomplete BOOLEAN NOT NULL DEFAULT TRUE
-);
-
-
-INSERT INTO task_state (name)
-VALUES
-	('ts_cancelled'),
-	('ts_held'),
-	('ts_waiting'),
-	('ts_ready'),
-	('ts_running'),
-	('ts_failed'),
-	('ts_done'),
-	('ts_synthesized'),
-	('ts_cleanable'),
-	('ts_cleaning'),
-	('ts_cleaned')
-ON CONFLICT (name) DO NOTHING;
-
 UPDATE task_state
 SET exceptional = TRUE
 WHERE name IN ('ts_cancelled', 'ts_held', 'ts_failed');

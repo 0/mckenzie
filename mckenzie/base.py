@@ -34,66 +34,6 @@ class DatabaseNoteView(DatabaseView):
         return description_format.format(*map(format_object, args[0]))
 
 
-class DatabaseReasonView(DatabaseView):
-    def __init__(self, table_name, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        # Mapping from names to IDs.
-        self._dict_r = {}
-
-        @self.db.tx
-        def reasons(tx):
-            return tx.execute(f'''
-                    SELECT id, name, description
-                    FROM {table_name}
-                    ORDER BY id
-                    ''')
-
-        for reason_id, name, description in reasons:
-            self._dict_r[name] = reason_id
-
-    def rlookup(self, name):
-        return self._dict_r[name]
-
-
-class DatabaseStateView(DatabaseView):
-    def __init__(self, table_name, prefix, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        self.prefix = prefix
-
-        # Mapping from IDs to names.
-        self._dict_f = {}
-        # Mapping from names to IDs.
-        self._dict_r = {}
-
-        @self.db.tx
-        def states(tx):
-            return tx.execute(f'''
-                    SELECT id, name
-                    FROM {table_name}
-                    ORDER BY id
-                    ''')
-
-        for state_id, name in states:
-            self._dict_f[state_id] = name
-            self._dict_r[name] = state_id
-
-    def lookup(self, state_id, *, user=False):
-        name = self._dict_f[state_id]
-
-        if user:
-            name = name[len(self.prefix):]
-
-        return name
-
-    def rlookup(self, name, *, user=False):
-        if user:
-            name = self.prefix + name
-
-        return self._dict_r[name]
-
-
 class Agent:
     def __init__(self, mck):
         self.mck = mck

@@ -1,3 +1,6 @@
+{{{X from .task import TaskState}}}
+
+
 CREATE TABLE IF NOT EXISTS task_state_transition
 (
 	id SERIAL PRIMARY KEY,
@@ -12,64 +15,32 @@ CREATE TABLE IF NOT EXISTS task_state_transition
 
 INSERT INTO task_state_transition (from_state_id, to_state_id, free_transition)
 VALUES
-	((SELECT id FROM task_state WHERE name = 'ts_held'),
-		(SELECT id FROM task_state WHERE name = 'ts_cancelled'),
-		TRUE),
-	((SELECT id FROM task_state WHERE name = 'ts_cancelled'),
-		(SELECT id FROM task_state WHERE name = 'ts_held'),
-		TRUE),
-	((SELECT id FROM task_state WHERE name = 'ts_held'),
-		(SELECT id FROM task_state WHERE name = 'ts_waiting'),
-		TRUE),
-	((SELECT id FROM task_state WHERE name = 'ts_waiting'),
-		(SELECT id FROM task_state WHERE name = 'ts_held'),
-		TRUE),
-	((SELECT id FROM task_state WHERE name = 'ts_waiting'),
-		(SELECT id FROM task_state WHERE name = 'ts_ready'),
-		-- Task must have no incomplete dependencies.
-		FALSE),
-	((SELECT id FROM task_state WHERE name = 'ts_ready'),
-		(SELECT id FROM task_state WHERE name = 'ts_waiting'),
-		TRUE),
-	((SELECT id FROM task_state WHERE name = 'ts_ready'),
-		(SELECT id FROM task_state WHERE name = 'ts_running'),
-		-- Task must be chosen by worker.
-		FALSE),
-	((SELECT id FROM task_state WHERE name = 'ts_running'),
-		(SELECT id FROM task_state WHERE name = 'ts_failed'),
-		-- Task must fail.
-		FALSE),
-	((SELECT id FROM task_state WHERE name = 'ts_failed'),
-		(SELECT id FROM task_state WHERE name = 'ts_waiting'),
-		-- Task must be cleaned.
-		FALSE),
-	((SELECT id FROM task_state WHERE name = 'ts_running'),
-		(SELECT id FROM task_state WHERE name = 'ts_done'),
-		-- Task must succeed.
-		FALSE),
-	((SELECT id FROM task_state WHERE name = 'ts_done'),
-		(SELECT id FROM task_state WHERE name = 'ts_synthesized'),
-		-- Task must be synthesized.
-		FALSE),
-	((SELECT id FROM task_state WHERE name = 'ts_synthesized'),
-		(SELECT id FROM task_state WHERE name = 'ts_cleanable'),
-		TRUE),
-	((SELECT id FROM task_state WHERE name = 'ts_cleanable'),
-		(SELECT id FROM task_state WHERE name = 'ts_synthesized'),
-		TRUE),
-	((SELECT id FROM task_state WHERE name = 'ts_cleanable'),
-		(SELECT id FROM task_state WHERE name = 'ts_cleaning'),
-		-- Could result in hard dependencies no longer being satisfied.
-		FALSE),
-	((SELECT id FROM task_state WHERE name = 'ts_cleaning'),
-		(SELECT id FROM task_state WHERE name = 'ts_cleaned'),
-		-- Task must be cleaned.
-		FALSE),
-	((SELECT id FROM task_state WHERE name = 'ts_cleaned'),
-		(SELECT id FROM task_state WHERE name = 'ts_waiting'),
-		-- Task must be unsynthesized. Could result in soft dependencies no
-		-- longer being satisfied.
-		FALSE)
+	({{{V TaskState.ts_waiting}}}, {{{V TaskState.ts_held}}}, TRUE),
+	-- Task must have no incomplete dependencies.
+	({{{V TaskState.ts_waiting}}}, {{{V TaskState.ts_ready}}}, FALSE),
+	({{{V TaskState.ts_held}}}, {{{V TaskState.ts_cancelled}}}, TRUE),
+	({{{V TaskState.ts_held}}}, {{{V TaskState.ts_waiting}}}, TRUE),
+	({{{V TaskState.ts_cancelled}}}, {{{V TaskState.ts_held}}}, TRUE),
+	({{{V TaskState.ts_ready}}}, {{{V TaskState.ts_waiting}}}, TRUE),
+	-- Task must be chosen by worker.
+	({{{V TaskState.ts_ready}}}, {{{V TaskState.ts_running}}}, FALSE),
+	-- Task must fail.
+	({{{V TaskState.ts_running}}}, {{{V TaskState.ts_failed}}}, FALSE),
+	-- Task must be cleaned.
+	({{{V TaskState.ts_failed}}}, {{{V TaskState.ts_waiting}}}, FALSE),
+	-- Task must succeed.
+	({{{V TaskState.ts_running}}}, {{{V TaskState.ts_done}}}, FALSE),
+	-- Task must be synthesized.
+	({{{V TaskState.ts_done}}}, {{{V TaskState.ts_synthesized}}}, FALSE),
+	({{{V TaskState.ts_synthesized}}}, {{{V TaskState.ts_cleanable}}}, TRUE),
+	({{{V TaskState.ts_cleanable}}}, {{{V TaskState.ts_synthesized}}}, TRUE),
+	-- Could result in hard dependencies no longer being satisfied.
+	({{{V TaskState.ts_cleanable}}}, {{{V TaskState.ts_cleaning}}}, FALSE),
+	-- Task must be cleaned.
+	({{{V TaskState.ts_cleaning}}}, {{{V TaskState.ts_cleaned}}}, FALSE),
+	-- Task must be unsynthesized. Could result in soft dependencies no longer
+	-- being satisfied.
+	({{{V TaskState.ts_cleaned}}}, {{{V TaskState.ts_waiting}}}, FALSE)
 ON CONFLICT (from_state_id, to_state_id) DO NOTHING;
 
 
