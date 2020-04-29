@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 from datetime import datetime, timedelta
-from enum import Enum, IntEnum, auto
+from enum import Enum, IntEnum, auto, unique
 import logging
 from math import ceil
 import os
@@ -44,6 +44,7 @@ class CheckViolation(DatabaseError):
         self.constraint_name = constraint_name
 
 
+@unique
 class IsolationLevel(Enum):
     READ_UNCOMMITTED = auto()
     READ_COMMITTED = auto()
@@ -51,6 +52,7 @@ class IsolationLevel(Enum):
     SERIALIZABLE = auto()
 
 
+@unique
 class AdvisoryKey(IntEnum):
     """
     Advisory lock key values.
