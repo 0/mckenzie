@@ -6,4 +6,4 @@ CREATE TABLE IF NOT EXISTS metadata
 );
 
 INSERT INTO metadata (key, value)
-VALUES ('schema_version', '6');
+VALUES ('schema_version', '{{{V Database.SCHEMA_VERSION}}}');

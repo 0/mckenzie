@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS task
 	num_dependencies_incomplete INTEGER NOT NULL DEFAULT 0,
 	elapsed_time INTERVAL,
 	max_mem_mb INTEGER,
-	CONSTRAINT name_spaces CHECK (name NOT LIKE '% %'),
+	CONSTRAINT name_spaces CHECK (name NOT LIKE '%% %%'),
 	CONSTRAINT dependencies_bound CHECK (num_dependencies_incomplete <= num_dependencies)
 );
 

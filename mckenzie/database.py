@@ -159,9 +159,7 @@ class Transaction:
 
 
 class Database:
-    # Current schema version. This number must match the schema_version value
-    # in the metadata table, and it must be increased each time the schema is
-    # modified.
+    # Current schema version. Must be increased when the schema is modified.
     SCHEMA_VERSION = 6
 
     # How many times to retry in case of deadlock.
@@ -635,7 +633,34 @@ class DatabaseManager(Manager, name='database'):
 
                     try:
                         with open(path) as f:
-                            tx.execute(f.read())
+                            query = f.read()
+
+                        query_args = ()
+                        g = globals().copy()
+
+                        while True:
+                            try:
+                                idx_start = query.index('{{{')
+                                idx_end = query.index('}}}')
+                            except ValueError:
+                                break
+
+                            if query[idx_start+3] == 'V':
+                                r = eval(query[(idx_start+5):idx_end], g)
+                                query = (query[:idx_start]
+                                         + '%s'
+                                         + query[(idx_end+3):])
+                                query_args += (r,)
+                            elif query[idx_start+3] == 'X':
+                                exec(query[(idx_start+5):idx_end], g)
+                                query = query[:idx_start] + query[(idx_end+3):]
+                            else:
+                                logger.error('Invalid specifier: '
+                                             f'{query[idx_start+3]}.')
+
+                                raise HandledException()
+
+                        tx.execute(query, query_args)
                     except Exception as e:
                         logger.error(path)
 

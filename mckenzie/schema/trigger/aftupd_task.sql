@@ -83,7 +83,7 @@ BEGIN
 
 	IF _incomplete_diff != 0 THEN
 		-- TASK_DEPENDENCY_ACCESS
-		PERFORM pg_advisory_xact_lock_shared(1001, NEW.id % (1<<31));
+		PERFORM pg_advisory_xact_lock_shared(1001, (NEW.id & ((1::bigint << 31) - 1))::integer);
 
 		FOR _dependent_task_id IN
 				SELECT task_id
