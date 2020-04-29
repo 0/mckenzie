@@ -160,7 +160,6 @@ def print_table(pre_header, pre_data, *, reset_str, total=None):
                 max_widths[col_idx] = width
 
     first_subcols = []
-    paddings = []
     max_widths_header = []
     idx = 0
 
@@ -169,14 +168,20 @@ def print_table(pre_header, pre_data, *, reset_str, total=None):
 
         if data_width >= len(heading):
             max_widths_header.append(data_width)
-            paddings.append(0)
         else:
             max_widths_header.append(len(heading))
-            paddings.append(len(heading) - data_width)
+
+            if aligns[idx] == '>':
+                # Extend the left-most column if it's right-aligned.
+                col_idx = idx
+            else:
+                # Extend the right-most column.
+                col_idx = idx + cols - 1
+
+            max_widths[col_idx] += len(heading) - data_width
 
         first_subcols.append(True)
         first_subcols.extend([False] * (cols-1))
-        paddings.extend([0] * (cols-1))
 
         idx += cols
 
@@ -192,8 +197,7 @@ def print_table(pre_header, pre_data, *, reset_str, total=None):
     print('+')
 
     for row in data_str:
-        for (t, clr), f, p, a, w in zip(row, first_subcols, paddings, aligns,
-                                        max_widths):
+        for (t, clr), f, a, w in zip(row, first_subcols, aligns, max_widths):
             s = '|' if f else '/'
 
             if clr is None:
@@ -202,8 +206,7 @@ def print_table(pre_header, pre_data, *, reset_str, total=None):
             else:
                 clr_reset = reset_str
 
-            fmt = '{} {}{}{{:{}{}}}{} '.format(s, ' ' * p, clr, a, w,
-                                               clr_reset)
+            fmt = '{} {}{{:{}{}}}{} '.format(s, clr, a, w, clr_reset)
             print(fmt.format(t), end='')
 
         print('|')
@@ -214,10 +217,9 @@ def print_table(pre_header, pre_data, *, reset_str, total=None):
 
         print('+')
 
-        for t, f, p, a, w in zip(total_row, first_subcols, paddings, aligns,
-                                 max_widths):
+        for t, f, a, w in zip(total_row, first_subcols, aligns, max_widths):
             s = '|' if f else '/'
-            print('{} {}{{:{}{}}} '.format(s, ' ' * p, a, w).format(t), end='')
+            print('{} {{:{}{}}} '.format(s, a, w).format(t), end='')
 
         print('|')
 
