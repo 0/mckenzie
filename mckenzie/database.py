@@ -563,22 +563,24 @@ class DatabaseManager(Manager, name='database'):
             cpus = int(cpus)
             cpu_used = slurm.parse_timedelta(cpu_used)
             cpu_total = slurm.parse_timedelta(cpu_total)
-            mem_used_gb = ceil(slurm.parse_units_mb(mem_used) / 1024)
-            mem_total_gb = ceil(slurm.parse_units_mb(mem_total[:-1]) / 1024)
+            cpu_percent_str = f'{ceil(cpu_used / cpu_total * 100)}%'
+            mem_used_mb = ceil(slurm.parse_units_mb(mem_used))
+            mem_total_mb = ceil(slurm.parse_units_mb(mem_total[:-1]))
 
             if mem_total[-1] == 'n':
                 # By node.
                 pass
             elif mem_total[-1] == 'c':
                 # By CPU.
-                mem_total_gb *= cpus
+                mem_total_mb *= cpus
             else:
                 logger.error('Invalid suffix.')
 
                 raise HandledException()
 
-            disk_read_gb = ceil(slurm.parse_units_mb(disk_read) / 1024)
-            disk_write_gb = ceil(slurm.parse_units_mb(disk_write) / 1024)
+            mem_percent_str = f'{ceil(mem_used_mb / mem_total_mb * 100)}%'
+            disk_read_mb = ceil(slurm.parse_units_mb(disk_read))
+            disk_write_mb = ceil(slurm.parse_units_mb(disk_write))
 
             try:
                 dt = datetime.fromisoformat(time_end)
@@ -588,11 +590,12 @@ class DatabaseManager(Manager, name='database'):
                 time_end = humanize_datetime(dt, now)
 
             database_data.append([jobid, cpus, cpu_used, cpu_total,
-                                  mem_used_gb, mem_total_gb, disk_read_gb,
-                                  disk_write_gb, time_end])
+                                  cpu_percent_str, mem_used_mb, mem_total_mb,
+                                  mem_percent_str, disk_read_mb, disk_write_mb,
+                                  time_end])
 
-        self.print_table(['Job ID', 'Cores', ('CPU (U/T)', 2),
-                          ('Mem (GB;U/T)', 2), ('Disk (GB;R/W)', 2), 'End'],
+        self.print_table(['Job ID', 'Cores', ('CPU (U/T/%)', 3),
+                          ('Mem (MB;U/T/%)', 3), ('Disk (MB;R/W)', 2), 'End'],
                          database_data)
 
     @description('load schema')
