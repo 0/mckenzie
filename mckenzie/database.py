@@ -97,6 +97,9 @@ class Transaction:
     def execute(self, *args, **kwargs):
         return self._execute(self.curs.execute, *args, **kwargs)
 
+    def mogrify(self, *args, **kwargs):
+        return self.curs.mogrify(*args, **kwargs).decode('utf-8')
+
     def savepoint(self, name):
         self.execute(f'SAVEPOINT {name}')
 
@@ -156,6 +159,13 @@ class Transaction:
 
     def advisory_unlock(self, *args, **kwargs):
         self._advisory_do('unlock', *args, **kwargs)
+
+    def dry_run(self):
+        def dump(*args, **kwargs):
+            print(self.mogrify(*args, **kwargs))
+
+        self.callproc = None
+        self.execute = dump
 
 
 class Database:
@@ -599,24 +609,30 @@ class DatabaseManager(Manager, name='database'):
                          database_data)
 
     @description('load schema')
+    @argument('--dump', action='store_true', help='dump schema instead of loading')
     @preflight(database_init=True)
     def load_schema(self, args):
+        dump = args.dump
+
         @self.db.tx
         def paths(tx):
-            db_version = self.db.schema_version(tx)
+            if not dump:
+                db_version = self.db.schema_version(tx)
 
-            if db_version is not None:
-                if db_version == False:
-                    logger.error('Schema already loaded, but version is '
-                                 'missing.')
-                elif db_version != Database.SCHEMA_VERSION:
-                    logger.error('Schema already loaded, but version '
-                                 f'"{db_version}" does not match '
-                                 f'"{Database.SCHEMA_VERSION}".')
-                else:
-                    logger.info('Schema already loaded, and up to date.')
+                if db_version is not None:
+                    if db_version == False:
+                        logger.error('Schema already loaded, but version is '
+                                     'missing.')
+                    elif db_version != Database.SCHEMA_VERSION:
+                        logger.error('Schema already loaded, but version '
+                                     f'"{db_version}" does not match '
+                                     f'"{Database.SCHEMA_VERSION}".')
+                    else:
+                        logger.info('Schema already loaded, and up to date.')
 
-                raise HandledException()
+                    raise HandledException()
+            else:
+                tx.dry_run()
 
             if self.db.dbschema is not None:
                 tx.execute(f'CREATE SCHEMA IF NOT EXISTS {self.db.dbschema}')
@@ -690,10 +706,11 @@ class DatabaseManager(Manager, name='database'):
 
             return paths
 
-        for path in paths:
-            logger.info(path)
+        if not dump:
+            for path in paths:
+                logger.info(path)
 
-        logger.info('Schema loaded successfully.')
+            logger.info('Schema loaded successfully.')
 
     @description('signal database jobs to quit')
     @argument('--current', action='store_true', help='signal currently active database')
