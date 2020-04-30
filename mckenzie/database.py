@@ -15,7 +15,7 @@ from psycopg2 import errorcodes
 
 from . import slurm
 from .arguments import argparsable, argument, description
-from .base import Manager
+from .base import Manager, preflight
 from .util import HandledException, check_proc, flock, humanize_datetime
 
 
@@ -405,9 +405,8 @@ class Database:
 
 
 @argparsable('database management')
+@preflight(database_init=False, database_current=False)
 class DatabaseManager(Manager, name='database'):
-    PREFLIGHT_DISABLED = frozenset({'database_init', 'database_current'})
-
     # Path to database output files, relative to database directory.
     DATABASE_OUTPUT_DIR = Path('database_output')
     # Database output file name template.
@@ -443,10 +442,8 @@ class DatabaseManager(Manager, name='database'):
                     f'{self.db.dbhost}:{self.db.dbport} is OK.')
 
     @description('back up database')
+    @preflight(database_init=True)
     def backup(self, args):
-        if not self.db.is_initialized(log=logger.error):
-            return
-
         timestamp = datetime.now().isoformat(timespec='seconds')
         output_path = self.db.dbpath / f'backup_{timestamp}'
 
@@ -477,10 +474,8 @@ class DatabaseManager(Manager, name='database'):
         logger.debug('Backup completed.')
 
     @description('connect to database')
+    @preflight(database_init=True)
     def client(self, args):
-        if not self.db.is_initialized(log=logger.error):
-            return
-
         proc_args = ['psql']
         proc_args.append('--dbname=' + str(self.db.dbname))
         proc_args.append('--no-password')
@@ -601,10 +596,8 @@ class DatabaseManager(Manager, name='database'):
                          database_data)
 
     @description('load schema')
+    @preflight(database_init=True)
     def load_schema(self, args):
-        if not self.db.is_initialized(log=logger.error):
-            return
-
         @self.db.tx
         def paths(tx):
             db_version = self.db.schema_version(tx)

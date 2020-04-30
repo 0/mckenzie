@@ -13,7 +13,7 @@ from time import sleep
 
 from . import slurm
 from .arguments import argparsable, argument, description
-from .base import Instance, Manager
+from .base import Instance, Manager, preflight
 from .task import TaskManager, TaskReason, TaskState
 from .util import HandledException, humanize_datetime, mem_rss_mb
 
@@ -914,6 +914,7 @@ class WorkerManager(Manager, name='worker'):
 
     @description('list completed worker jobs')
     @argument('--last-hr', metavar='T', type=float, required=True, help='jobs completed in the last T hours')
+    @preflight(database_init=False, database_current=False)
     def list_completed(self, args):
         last = timedelta(hours=args.last_hr)
 
@@ -1075,6 +1076,9 @@ class WorkerManager(Manager, name='worker'):
                                       WorkerReason.wr_worker_quit_cancelled))
 
     @description('run worker inside Slurm job')
+    # Prefer to wait for the database to become available rather than quitting
+    # immediately and losing the allocation.
+    @preflight(database_init=False)
     def run(self, args):
         slurm_job_id = slurm.get_job_id(log=logger.error)
         worker_node, worker_cpus, worker_mem_mb = slurm.get_job_variables()

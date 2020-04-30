@@ -34,6 +34,15 @@ class DatabaseNoteView(DatabaseView):
         return description_format.format(*map(format_object, args[0]))
 
 
+def preflight(**kwargs):
+    def wrapped(f):
+        f._preflight_kwargs = kwargs
+
+        return f
+
+    return wrapped
+
+
 class Agent:
     def __init__(self, mck):
         self.mck = mck
@@ -48,8 +57,6 @@ class Instance(Agent):
 
 class Manager(Agent):
     _registry = {}
-
-    PREFLIGHT_DISABLED = frozenset()
 
     def __init_subclass__(cls, *, name, **kwargs):
         super().__init_subclass__(**kwargs)

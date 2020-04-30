@@ -4,7 +4,7 @@ import shlex
 import traceback
 
 from .arguments import argparsable, argument, description
-from .base import Manager
+from .base import Manager, preflight
 from .util import HandledException, without_sigint
 
 
@@ -12,9 +12,8 @@ logger = logging.getLogger(__name__)
 
 
 @argparsable('batch command execution')
+@preflight(database_init=False, database_current=False)
 class BatchManager(Manager, name='batch'):
-    PREFLIGHT_DISABLED = frozenset({'database_init', 'database_current'})
-
     PROMPT = 'mck> '
 
     def summary(self, args):

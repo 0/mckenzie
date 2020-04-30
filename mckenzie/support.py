@@ -7,7 +7,7 @@ import shlex
 
 from . import slurm
 from .arguments import argparsable, argument, description
-from .base import Manager
+from .base import Manager, preflight
 from .util import humanize_datetime
 
 
@@ -15,9 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 @argparsable('support job management')
+@preflight(database_init=False, database_current=False)
 class SupportManager(Manager, name='support'):
-    PREFLIGHT_DISABLED = frozenset({'database_init', 'database_current'})
-
     # Path to support output files, relative to support directory.
     SUPPORT_OUTPUT_DIR = Path('support_output')
     # Support output file name template.

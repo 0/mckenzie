@@ -164,8 +164,22 @@ class McKenzie:
             subcmd = subcmd.replace('-', '_')
 
         M = Manager.get_manager(mgr_name)
+        mgr = M(self)
+        cmd_f = getattr(mgr, subcmd)
 
-        if not self._preflight(**{key: False for key in M.PREFLIGHT_DISABLED}):
+        preflight_kwargs = {}
+
+        try:
+            preflight_kwargs.update(mgr._preflight_kwargs)
+        except AttributeError:
+            pass
+
+        try:
+            preflight_kwargs.update(cmd_f._preflight_kwargs)
+        except AttributeError:
+            pass
+
+        if not self._preflight(**preflight_kwargs):
             return
 
-        getattr(M(self), subcmd)(args)
+        cmd_f(args)
