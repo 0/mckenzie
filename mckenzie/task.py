@@ -1008,7 +1008,7 @@ class TaskManager(Manager, name='task'):
         def tasks(tx):
             query = '''
                     SELECT name, state_id, priority, time_limit, mem_limit_mb,
-                           num_dependencies, num_dependencies_incomplete
+                           num_dependencies, num_dependencies_satisfied
                     FROM task
                     WHERE TRUE
                     '''
@@ -1029,13 +1029,13 @@ class TaskManager(Manager, name='task'):
         task_data = []
 
         for (name, state_id, priority, time_limit, mem_limit_mb, num_dep,
-                num_dep_inc) in tasks:
+                num_dep_sat) in tasks:
             state, state_user, state_color = self._format_state(state_id)
 
             if num_dep > 0:
-                dep = f'{num_dep-num_dep_inc}/{num_dep}'
+                dep = f'{num_dep_sat}/{num_dep}'
 
-                if num_dep_inc > 0:
+                if num_dep_sat != num_dep:
                     dep = (dep, self.c('notice'))
             else:
                 dep = ''

@@ -8,6 +8,10 @@ CREATE TABLE IF NOT EXISTS task_state_transition
 	to_state_id INTEGER NOT NULL REFERENCES task_state,
 	-- Transition has no external requirements or associated actions.
 	free_transition BOOLEAN NOT NULL,
+	-- Change in "satisfies_dependency" between states.
+	satisfies_dependency_diff INTEGER NOT NULL DEFAULT 0,
+	-- Change in "satisfies_soft_dependency" between states.
+	satisfies_soft_dependency_diff INTEGER NOT NULL DEFAULT 0,
 	UNIQUE (from_state_id, to_state_id),
 	CONSTRAINT different_states CHECK (from_state_id != to_state_id)
 );
@@ -16,7 +20,7 @@ CREATE TABLE IF NOT EXISTS task_state_transition
 INSERT INTO task_state_transition (from_state_id, to_state_id, free_transition)
 VALUES
 	({{{V TaskState.ts_waiting}}}, {{{V TaskState.ts_held}}}, TRUE),
-	-- Task must have no incomplete dependencies.
+	-- Task must have no unsatisfied dependencies.
 	({{{V TaskState.ts_waiting}}}, {{{V TaskState.ts_ready}}}, FALSE),
 	({{{V TaskState.ts_held}}}, {{{V TaskState.ts_cancelled}}}, TRUE),
 	({{{V TaskState.ts_held}}}, {{{V TaskState.ts_waiting}}}, TRUE),
@@ -59,3 +63,15 @@ UNION
 INSERT INTO task_state_transition (from_state_id, to_state_id, free_transition)
 SELECT * FROM paths
 ON CONFLICT (from_state_id, to_state_id) DO NOTHING;
+
+
+-- Populate dependency changes.
+UPDATE task_state_transition tst
+SET satisfies_dependency_diff
+	= (SELECT ts.satisfies_dependency FROM task_state ts WHERE ts.id = tst.to_state_id)::INTEGER
+		- (SELECT ts.satisfies_dependency FROM task_state ts WHERE ts.id = tst.from_state_id)::INTEGER;
+
+UPDATE task_state_transition tst
+SET satisfies_soft_dependency_diff
+	= (SELECT ts.satisfies_soft_dependency FROM task_state ts WHERE ts.id = tst.to_state_id)::INTEGER
+		- (SELECT ts.satisfies_soft_dependency FROM task_state ts WHERE ts.id = tst.from_state_id)::INTEGER;

@@ -170,7 +170,7 @@ class Transaction:
 
 class Database:
     # Current schema version. Must be increased when the schema is modified.
-    SCHEMA_VERSION = 7
+    SCHEMA_VERSION = 8
 
     # How many times to retry in case of deadlock.
     NUM_RETRIES = 16
