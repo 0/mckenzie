@@ -8,6 +8,10 @@ CREATE TABLE IF NOT EXISTS worker_history
 );
 
 
+CREATE INDEX IF NOT EXISTS worker_history_worker_id
+ON worker_history (worker_id);
+
+
 DROP TRIGGER IF EXISTS aftins_worker_history
 ON worker_history;
 

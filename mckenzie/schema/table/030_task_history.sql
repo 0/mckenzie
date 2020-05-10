@@ -9,6 +9,10 @@ CREATE TABLE IF NOT EXISTS task_history
 );
 
 
+CREATE INDEX IF NOT EXISTS task_history_task_id
+ON task_history (task_id);
+
+
 DROP TRIGGER IF EXISTS aftins_task_history
 ON task_history;
 
