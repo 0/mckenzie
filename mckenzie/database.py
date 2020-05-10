@@ -541,7 +541,7 @@ class DatabaseManager(Manager, name='database'):
                 else:
                     time_end = humanize_datetime(dt, now)
 
-            database_data.append([jobid, state, reason, partition, cpus,
+            database_data.append([jobid, state, reason[:20], partition, cpus,
                                   time_total, mem_gb, time_start, time_end])
 
         # Sort by start time.

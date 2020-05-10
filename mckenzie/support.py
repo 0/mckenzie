@@ -104,7 +104,7 @@ class SupportManager(Manager, name='support'):
                 else:
                     time_end = humanize_datetime(dt, now)
 
-            support_data.append([jobid, state, reason, partition, cpus,
+            support_data.append([jobid, state, reason[:20], partition, cpus,
                                  time_total, mem_gb, time_start, time_end])
 
         # Sort by start time.
