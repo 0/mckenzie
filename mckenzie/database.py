@@ -479,7 +479,7 @@ class DatabaseManager(Manager, name='database'):
 
         logger.debug(f'Starting backup to {output_path}.')
 
-        proc = subprocess.run(proc_args, env=proc_env)
+        proc = subprocess.run(proc_args, env={**os.environ, **proc_env})
 
         if not check_proc(proc, log=logger.error):
             return
