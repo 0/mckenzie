@@ -325,8 +325,11 @@ class Database:
                 with self.conn:
                     with self.conn.cursor() as curs:
                         tx = Transaction(curs)
+                        result = f(tx)
 
-                        return f(tx)
+                        logger.debug('Ending transaction.')
+
+                        return result
             except Exception as e:
                 if retries_left <= 0:
                     logger.warning('Out of retries!')
