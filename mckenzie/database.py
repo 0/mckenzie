@@ -173,10 +173,10 @@ class Database:
     SCHEMA_VERSION = 8
 
     # How many times to retry in case of deadlock.
-    NUM_RETRIES = 16
+    NUM_RETRIES = 32
 
-    # 0.1 minutes
-    RECONNECT_WAIT_SECONDS = 6
+    # 1 minute
+    RECONNECT_WAIT_SECONDS = 60
 
     @staticmethod
     def schema_version(tx):
