@@ -1499,7 +1499,7 @@ class TaskManager(Manager, name='task'):
         @self.db.tx
         def task_dependency(tx):
             return tx.execute('''
-                    SELECT t.name, t.state_id
+                    SELECT t.name, td.soft, t.state_id
                     FROM task_dependency td
                     JOIN task t ON t.id = td.dependency_id
                     WHERE td.task_id = %s
@@ -1508,13 +1508,14 @@ class TaskManager(Manager, name='task'):
 
         task_data = []
 
-        for dependency_name, state_id in task_dependency:
+        for dependency_name, soft, state_id in task_dependency:
             state_user = TaskState.user(TaskState(state_id).name)
 
-            task_data.append([dependency_name, state_user])
+            task_data.append([dependency_name, 'soft' if soft else 'hard',
+                              state_user])
 
         if task_data:
-            self.print_table(['Dependency', 'State'], task_data)
+            self.print_table(['Dependency', 'Type', 'State'], task_data)
         else:
             print('No dependencies.')
 
