@@ -533,6 +533,10 @@ class WorkerManager(Manager, name='worker'):
         if job_running and timeout:
             state_user += ' (?)'
             color = self.c('warning')
+        elif state in 'ws_queued':
+            color = self.c('notice')
+        elif state == 'ws_running':
+            color = self.c('good')
         elif state == 'ws_quitting':
             color = self.c('notice')
         elif state == 'ws_failed':
