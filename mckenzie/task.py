@@ -925,8 +925,9 @@ class TaskManager(Manager, name='task'):
                     JOIN task t2 ON t2.id = td.dependency_id
                     JOIN task_state ts2 ON ts2.id = t2.state_id
                     WHERE ts1.pending
-                    AND ts2.incomplete
-                    AND NOT ts2.pending
+                    AND NOT (ts2.satisfies_dependency
+                             OR (td.soft AND ts2.satisfies_soft_dependency)
+                             OR ts2.pending)
                     GROUP BY t2.name
                     ORDER BY count DESC
                     LIMIT 5
