@@ -9,6 +9,12 @@ CREATE TABLE IF NOT EXISTS task_dependency
 );
 
 
+-- For the LEFT JOIN in the cleanable_tasks subquery for the "task clean"
+-- command, when selecting a task in ts_cleanable.
+CREATE INDEX IF NOT EXISTS task_dependency_dependency_id_soft
+ON task_dependency (dependency_id, soft);
+
+
 DROP TRIGGER IF EXISTS aftins_task_dependency
 ON task_dependency;
 

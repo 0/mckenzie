@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS task
 (
 	id SERIAL PRIMARY KEY,
-	name TEXT NOT NULL UNIQUE,
+	name TEXT NOT NULL,
 	state_id INTEGER NOT NULL REFERENCES task_state,
 	priority INTEGER NOT NULL,
 	time_limit INTERVAL NOT NULL,
@@ -15,6 +15,13 @@ CREATE TABLE IF NOT EXISTS task
 	CONSTRAINT name_spaces CHECK (name NOT LIKE '%% %%'),
 	CONSTRAINT dependencies_bound CHECK (num_dependencies_satisfied <= num_dependencies)
 );
+
+
+CREATE UNIQUE INDEX IF NOT EXISTS task_name_pattern_ops
+ON task (name text_pattern_ops);
+
+CREATE INDEX IF NOT EXISTS task_state_id
+ON task (state_id);
 
 
 DROP TRIGGER IF EXISTS aftins_task
