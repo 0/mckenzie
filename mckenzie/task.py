@@ -863,10 +863,10 @@ class TaskManager(Manager, name='task'):
                 state, state_user, state_color = self._format_state(state_id)
 
                 task_data.append([name, (state_user, state_color), priority,
-                                  time_limit, mem_limit_mb])
+                                  (time_limit, self.c('bold')), mem_limit_mb])
 
             self.print_table(['Name', 'State', 'Priority', 'Time', 'Mem (MB)'],
-                             task_data)
+                             reversed(task_data))
 
             print()
 
@@ -877,10 +877,10 @@ class TaskManager(Manager, name='task'):
                 state, state_user, state_color = self._format_state(state_id)
 
                 task_data.append([name, (state_user, state_color), priority,
-                                  time_limit, mem_limit_mb])
+                                  time_limit, (mem_limit_mb, self.c('bold'))])
 
             self.print_table(['Name', 'State', 'Priority', 'Time', 'Mem (MB)'],
-                             task_data)
+                             reversed(task_data))
         else:
             print('No ready tasks.')
 
@@ -909,7 +909,7 @@ class TaskManager(Manager, name='task'):
 
         if task_data:
             self.print_table(['Name', 'State', 'Claimed by', 'Since', 'For'],
-                             task_data)
+                             reversed(task_data))
         else:
             print('No tasks claimed by non-workers.')
 
@@ -938,7 +938,8 @@ class TaskManager(Manager, name='task'):
             task_data.append([task_name, count])
 
         if task_data:
-            self.print_table(['Name', 'Blocked dependents'], task_data)
+            self.print_table(['Name', 'Blocked dependents'],
+                             reversed(task_data))
         else:
             print('No blocking dependencies.')
 
@@ -967,7 +968,7 @@ class TaskManager(Manager, name='task'):
                               humanize_datetime(time, now)])
 
         if task_data:
-            self.print_table(['Name', 'Note', 'Time'], task_data)
+            self.print_table(['Name', 'Note', 'Time'], reversed(task_data))
         else:
             print('No notes.')
 
