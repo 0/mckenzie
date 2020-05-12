@@ -103,7 +103,7 @@ class Manager(Agent):
 
     @classmethod
     def all_managers(cls):
-        return cls._registry.values()
+        return [x[1] for x in sorted(cls._registry.items())]
 
     @classmethod
     def get_manager(cls, name):

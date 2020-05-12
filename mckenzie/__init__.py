@@ -8,12 +8,7 @@ from .conf import Conf
 from .util import event_on_sigint, foreverdict
 
 # To register the managers.
-from .batch import BatchManager
-from .database import DatabaseManager
-from .debug import DebugManager
-from .support import SupportManager
-from .task import TaskManager
-from .worker import WorkerManager
+from . import batch, database, debug, support, task, worker
 
 # For export.
 from .util import HandledException
