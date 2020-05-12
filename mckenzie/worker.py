@@ -1193,7 +1193,7 @@ class WorkerManager(Manager, name='worker'):
 
             return
 
-        (num_cores, time_limit, mem_limit_mb, node, heartbeat) = worker[0]
+        num_cores, time_limit, mem_limit_mb, node, heartbeat = worker[0]
 
         mem_limit_gb = ceil(mem_limit_mb / 1024)
         node = node if node is not None else '-'
