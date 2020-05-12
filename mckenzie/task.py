@@ -12,7 +12,7 @@ from .database import (AdvisoryKey, CheckViolation, IsolationLevel,
                        RaisedException)
 from .util import DirectedAcyclicGraphNode as DAG
 from .util import (HandledException, check_proc, format_datetime,
-                   format_timedelta, humanize_datetime)
+                   format_timedelta, humanize_datetime, print_histograms)
 
 
 logger = logging.getLogger(__name__)
@@ -851,9 +851,47 @@ class TaskManager(Manager, name='task'):
                     LIMIT 5
                     ''', (TaskState.ts_ready,))
 
-            return longest, largest
+            times = tx.execute('''
+                    WITH time (seconds) AS (
+                        SELECT EXTRACT(EPOCH FROM time_limit)
+                        FROM task
+                        WHERE state_id = %s
+                    ),
+                    bound (min, max) AS (
+                        SELECT MIN(seconds), MAX(seconds)
+                        FROM time
+                    )
+                    SELECT WIDTH_BUCKET(LOG(time.seconds), LOG(bound.min),
+                                        LOG(bound.max+1), 10) AS bucket,
+                           MAKE_INTERVAL(SECS => MIN(time.seconds)),
+                           MAKE_INTERVAL(SECS => MAX(time.seconds)), COUNT(*)
+                    FROM time, bound
+                    GROUP BY bucket
+                    ORDER BY bucket
+                    ''', (TaskState.ts_ready,))
 
-        longest_ready_tasks, largest_ready_tasks = ready_tasks
+            mems = tx.execute('''
+                    WITH mem (mbs) AS (
+                        SELECT mem_limit_mb
+                        FROM task
+                        WHERE state_id = %s
+                    ),
+                    bound (min, max) AS (
+                        SELECT MIN(mbs), MAX(mbs)
+                        FROM mem
+                    )
+                    SELECT WIDTH_BUCKET(LOG(mem.mbs), LOG(bound.min),
+                                        LOG(bound.max+1), 10) AS bucket,
+                           MIN(mem.mbs), MAX(mem.mbs), COUNT(*)
+                    FROM mem, bound
+                    GROUP BY bucket
+                    ORDER BY bucket
+                    ''', (TaskState.ts_ready,))
+
+            return longest, largest, times, mems
+
+        (longest_ready_tasks, largest_ready_tasks, ready_task_times,
+                ready_task_mems) = ready_tasks
 
         if longest_ready_tasks:
             task_data = []
@@ -881,6 +919,11 @@ class TaskManager(Manager, name='task'):
 
             self.print_table(['Name', 'State', 'Priority', 'Time', 'Mem (MB)'],
                              reversed(task_data))
+
+            print()
+
+            print_histograms(['Time', 'Mem (MB)'],
+                             [ready_task_times, ready_task_mems])
         else:
             print('No ready tasks.')
 

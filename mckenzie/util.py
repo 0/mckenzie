@@ -2,6 +2,8 @@ from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 import fcntl
+from itertools import zip_longest
+from math import ceil
 import shlex
 import signal
 import subprocess
@@ -220,6 +222,80 @@ def print_table(pre_header, pre_data, *, reset_str, total=None):
         for t, f, a, w in zip(total_row, first_subcols, aligns, max_widths):
             s = '|' if f else '/'
             print('{} {{:{}{}}} '.format(s, a, w).format(t), end='')
+
+        print('|')
+
+def print_histograms(headers, pre_datas):
+    S = 10
+
+    # Format data and determine alignment.
+    datas = []
+    aligns = []
+
+    for pre_data in pre_datas:
+        data = []
+
+        for _, left, right, count in pre_data:
+            data.append((format_object(left), count))
+
+        data.append((format_object(right), None))
+
+        datas.append(data)
+        aligns.append('>' if type(right) in RIGHT_ALIGNS else '<')
+
+    # Compute widths.
+    max_edge_widths = []
+    max_counts = []
+
+    for data_idx, data in enumerate(datas):
+        max_edge_width = len(headers[data_idx])
+        max_count = -1
+
+        for edge, count in data:
+            formatted = format_object(edge)
+            edge_width = len(formatted)
+
+            if max_edge_width < edge_width:
+                max_edge_width = edge_width
+
+            if count is not None and max_count < count:
+                max_count = count
+
+        max_edge_widths.append(max_edge_width)
+        max_counts.append(max_count)
+
+    # Output histograms.
+    for data_idx, header in enumerate(headers):
+        bar = ' ' * S
+        fmt = '| {{:{}}} {{}} '.format(max_edge_widths[data_idx])
+        print(fmt.format(header, bar), end='')
+
+    print('|')
+
+    for width in max_edge_widths:
+        fmt = '+-{{:-<{}}}-{{:-<{}}}-'.format(width, S)
+        print(fmt.format('', ''), end='')
+
+    print('+')
+
+    for items in zip_longest(*datas):
+        for data_idx, item in enumerate(items):
+            if item is None:
+                edge = ''
+                count = None
+            else:
+                edge, count = item
+
+            if count is not None:
+                proportion = ceil(count / max_counts[data_idx] * S)
+            else:
+                proportion = 0
+
+            bar = ('#' * proportion) + (' ' * (S - proportion))
+            fmt = '| {{:{}{}}} {{}} '.format(aligns[data_idx],
+                                             max_edge_widths[data_idx])
+
+            print(fmt.format(edge, bar), end='')
 
         print('|')
 
