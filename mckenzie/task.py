@@ -1,13 +1,13 @@
 from contextlib import ExitStack
 from datetime import datetime, timedelta
-from enum import IntEnum, unique
+from enum import unique
 from heapq import heappop, heappush
 import logging
 import os
 import subprocess
 
 from .arguments import argparsable, argument, description
-from .base import DatabaseNoteView, Manager
+from .base import DatabaseEnum, DatabaseNoteView, Manager
 from .database import (AdvisoryKey, CheckViolation, IsolationLevel,
                        RaisedException)
 from .util import DirectedAcyclicGraphNode as DAG
@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 
 @unique
-class TaskState(IntEnum):
+class TaskState(DatabaseEnum):
     ts_waiting = 1
     ts_held = 2
     ts_cancelled = 3
@@ -72,7 +72,7 @@ class TaskState(IntEnum):
 
 
 @unique
-class TaskReason(IntEnum):
+class TaskReason(DatabaseEnum):
     tr_task_add = 1
     tr_task_cancel = 2
     tr_task_uncancel = 3

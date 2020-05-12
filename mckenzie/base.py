@@ -1,7 +1,43 @@
+from enum import IntEnum
 import os
 from random import randint
 
 from .util import format_object, print_table
+
+
+class DatabaseEnum(IntEnum):
+    @classmethod
+    def validate(cls, table_name, tx):
+        db_values = tx.execute(f'''
+                SELECT id, name
+                FROM {table_name}
+                ''')
+
+        lookup = {}
+
+        for db_id, db_name in db_values:
+            lookup[db_name] = db_id
+
+            try:
+                expected_name = cls(db_id).name
+            except ValueError:
+                print(f'Enum {cls.__name__} is missing {db_id}, expected '
+                      f'"{db_name}".')
+            else:
+                if expected_name != db_name:
+                    print(f'Table {table_name} {db_id} is "{db_name}", but '
+                          f'expected "{expected_name}".')
+
+        for item in cls:
+            try:
+                expected_value = lookup[item.name]
+            except KeyError:
+                print(f'Table {table_name} is missing "{item.name}", expected '
+                      f'{item.value}.')
+            else:
+                if item.value != expected_value:
+                    print(f'Enum {cls.__name__} "{item.name}" is '
+                          f'{item.value}, but expected {expected_value}')
 
 
 class DatabaseView:

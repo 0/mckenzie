@@ -114,19 +114,29 @@ class Transaction:
         else:
             self.curs.connection.rollback()
 
-    def isolate(self, level):
+    def isolate(self, level, *, deferrable=False):
         if level == IsolationLevel.READ_UNCOMMITTED:
-            self.execute('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
+            cmd = ('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED')
         elif level == IsolationLevel.READ_COMMITTED:
-            self.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
+            cmd = ('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
         elif level == IsolationLevel.REPEATABLE_READ:
-            self.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
+            cmd = ('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
         elif level == IsolationLevel.SERIALIZABLE:
-            self.execute('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE')
+            cmd = ('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE')
         else:
             logger.error('Unrecognized level: {level}')
 
             raise HandledException()
+
+        if deferrable:
+            if not level == IsolationLevel.SERIALIZABLE:
+                logger.error('DEFERRABLE is only useful with SERIALIZABLE.')
+
+                raise HandledException()
+
+            cmd += ', READ ONLY, DEFERRABLE'
+
+        self.execute(cmd)
 
     def _advisory_do(self, action, key, key2=None, *, xact=False, shared=False):
         name_pieces = ['pg', 'advisory']

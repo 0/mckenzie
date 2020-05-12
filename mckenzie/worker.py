@@ -1,6 +1,6 @@
 from concurrent import futures
 from datetime import datetime, timedelta
-from enum import IntEnum, unique
+from enum import unique
 import logging
 from math import ceil, floor
 import os
@@ -13,7 +13,7 @@ from time import sleep
 
 from . import slurm
 from .arguments import argparsable, argument, description
-from .base import Instance, Manager, preflight
+from .base import DatabaseEnum, Instance, Manager, preflight
 from .task import TaskManager, TaskReason, TaskState
 from .util import HandledException, humanize_datetime, mem_rss_mb
 
@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 @unique
-class WorkerState(IntEnum):
+class WorkerState(DatabaseEnum):
     ws_queued = 1
     ws_running = 2
     ws_quitting = 3
@@ -62,7 +62,7 @@ class WorkerState(IntEnum):
 
 
 @unique
-class WorkerReason(IntEnum):
+class WorkerReason(DatabaseEnum):
     wr_worker_spawn = 1
     wr_worker_quit_cancelled = 2
     wr_start = 3
