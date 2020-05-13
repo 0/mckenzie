@@ -1,3 +1,4 @@
+from collections import defaultdict
 from contextlib import ExitStack
 from datetime import datetime, timedelta
 from enum import unique
@@ -608,6 +609,69 @@ class TaskManager(Manager, name='task'):
                                   TaskReason.tr_task_cancel,
                                   name_pattern, names, count_limit=count_limit,
                                   time_limit_hr=time_limit_hr)
+
+    @description('visualize task state changes')
+    @argument('--span-hr', metavar='T', type=float, required=True, help='show bars spanning T hours')
+    def churn(self, args):
+        span = timedelta(hours=args.span_hr)
+
+        B = 80
+
+        @self.db.tx
+        def task_states(tx):
+            return tx.execute('''
+                    WITH edge (x) AS (
+                        SELECT y * %s
+                        FROM GENERATE_SERIES(1, %s) AS y
+                    ),
+                    states (bucket, state_id, count) AS (
+                        SELECT WIDTH_BUCKET(NOW() - th.time,
+                                            ARRAY(SELECT x FROM edge)) AS bucket,
+                               th.state_id, COUNT(*)
+                        FROM task_history th
+                        WHERE th.time > NOW() - (SELECT MAX(x) FROM edge)
+                        GROUP BY bucket, th.state_id
+                        ORDER BY bucket, th.state_id
+                    )
+                    SELECT bucket, ARRAY_AGG(ARRAY[state_id, count])
+                    FROM states
+                    GROUP BY bucket
+                    ORDER BY bucket
+                    ''', (span, B))
+
+        data = []
+        idx = 0
+
+        for bucket, states in task_states:
+            while idx + 1 < bucket:
+                data.append([])
+                idx += 1
+
+            bucket_data = defaultdict(int)
+
+            for state_id, count in states:
+                _, _, color = self._format_state(state_id)
+
+                if color is None:
+                    color = ''
+
+                bucket_data[color] += count
+
+            data.append(list(sorted(bucket_data.items())))
+
+            idx += 1
+
+        while len(data) < B:
+            data.append([])
+
+        td_str = format_timedelta(span)
+        now = datetime.now()
+        data_start = now - B * span
+        data_start_regular = format_datetime(data_start)
+        data_start_human = humanize_datetime(data_start, now, force=True)
+
+        print(f'{td_str} (from {data_start_regular}, or {data_start_human})')
+        self.print_time_series(list(reversed(data)))
 
     @description('run clean command for "cleanable" tasks')
     @argument('--count-limit', metavar='N', type=int, help='stop after N tasks')

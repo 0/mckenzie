@@ -300,7 +300,56 @@ def print_histograms(headers, pre_datas):
         print('|')
 
 
-def humanize_datetime(dt, now):
+def print_time_series(data, *, reset_str):
+    S = 10
+
+    # Find the maximum size of a single bar.
+    max_total = -1
+
+    for items in data:
+        total = sum(x[1] for x in items)
+
+        if max_total < total:
+            max_total = total
+
+    # Format the bars.
+    bars = []
+    # We always leave enough room for S segments, even if there are no bars to
+    # be shown. However, it's possible to have more than S segments due to
+    # rounding, so we must count them.
+    max_bar_length = S
+
+    for items in data:
+        bar = []
+
+        for color, count in items:
+            proportion = ceil(count / max_total * S)
+            bar.extend([f'{color}#{reset_str}'] * proportion)
+
+        bars.append(bar)
+
+        if max_bar_length < len(bar):
+            max_bar_length = len(bar)
+
+    # Output time series.
+    for i in range(max_bar_length, 0, -1):
+        for bar in bars:
+            try:
+                c = bar[i-1]
+            except IndexError:
+                c = ' '
+
+            print(c, end='')
+
+        print()
+
+    for i in range(len(bars), 0, -1):
+        print(i % 10, end='')
+
+    print()
+
+
+def humanize_datetime(dt, now, *, force=False):
     if dt <= now:
         delta = now - dt
         template = '{} ago'
@@ -308,7 +357,7 @@ def humanize_datetime(dt, now):
         delta = dt - now
         template = 'in {}'
 
-    if delta >= timedelta(hours=24):
+    if not force and delta >= timedelta(hours=24):
         return format_datetime(dt)
 
     delta_fmt = format_timedelta(delta)

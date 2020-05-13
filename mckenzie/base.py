@@ -2,7 +2,7 @@ from enum import IntEnum
 import os
 from random import randint
 
-from .util import format_object, print_table
+from .util import format_object, print_table, print_time_series
 
 
 class DatabaseEnum(IntEnum):
@@ -133,3 +133,6 @@ class Manager(Agent):
 
     def print_table(self, *args, **kwargs):
         print_table(*args, reset_str=self.c('reset'), **kwargs)
+
+    def print_time_series(self, *args, **kwargs):
+        print_time_series(*args, reset_str=self.c('reset'), **kwargs)
