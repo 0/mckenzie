@@ -336,6 +336,25 @@ def combine_shell_args(*argss):
     return result
 
 
+SENSITIVE_VARIABLES = {
+    'PGPASSWORD': '********',
+}
+
+def assemble_command(proc_args, proc_env=None):
+    envs = []
+
+    if proc_env is not None:
+        for name, value in proc_env.items():
+            try:
+                value = SENSITIVE_VARIABLES[name]
+            except KeyError:
+                pass
+
+            envs.append(f'{name}={shlex.quote(value)}')
+
+    return ' '.join([*envs, shlex.join(proc_args)])
+
+
 def check_proc(proc, *, log, stacklevel=1):
     if proc.returncode != 0:
         log(f'Encountered an error ({proc.returncode}).',

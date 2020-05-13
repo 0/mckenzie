@@ -8,7 +8,7 @@ import shlex
 from . import slurm
 from .arguments import argparsable, argument, description
 from .base import Manager, preflight
-from .util import humanize_datetime
+from .util import assemble_command, humanize_datetime
 
 
 logger = logging.getLogger(__name__)
@@ -41,9 +41,11 @@ class SupportManager(Manager, name='support'):
         logger.info('No action specified.')
 
     @description('attach to support job')
+    @argument('--print-command', action='store_true', help='only print the command that would be executed')
     @argument('--node', metavar='N', help='name of node on which job is running')
     @argument('slurm_job_id', type=int, help='Slurm job ID of support job')
     def attach(self, args):
+        print_command = args.print_command
         node = args.node
         slurm_job_id = args.slurm_job_id
 
@@ -62,7 +64,12 @@ class SupportManager(Manager, name='support'):
         proc_args = ['ssh']
         proc_args.append('-t')
         proc_args.append(node)
-        proc_args.append(f"tmux -S '{socket_path}' attach")
+        proc_args.extend(['tmux', '-S', shlex.quote(socket_path), 'attach'])
+
+        if print_command:
+            print(assemble_command(proc_args))
+
+            return
 
         logger.debug(f'Attaching to support job {slurm_job_id}.')
 

@@ -16,7 +16,8 @@ from psycopg2 import errorcodes
 from . import slurm
 from .arguments import argparsable, argument, description
 from .base import Manager, preflight
-from .util import HandledException, check_proc, flock, humanize_datetime
+from .util import (HandledException, assemble_command, check_proc, flock,
+                   humanize_datetime)
 
 
 logger = logging.getLogger(__name__)
@@ -465,8 +466,11 @@ class DatabaseManager(Manager, name='database'):
                     f'{self.db.dbhost}:{self.db.dbport} is OK.')
 
     @description('back up database')
+    @argument('--print-command', action='store_true', help='only print the command that would be executed')
     @preflight(database_init=True)
     def backup(self, args):
+        print_command = args.print_command
+
         timestamp = datetime.now().isoformat(timespec='seconds')
         output_path = self.db.dbpath / f'backup_{timestamp}'
 
@@ -480,12 +484,17 @@ class DatabaseManager(Manager, name='database'):
         proc_args.append('--no-sync')
         proc_args.append('--progress')
         proc_args.append('--verbose')
-        proc_args.append('--no-password')
         proc_args.append('--host=' + self.db.dbhost)
         proc_args.append('--port=' + str(self.db.dbport))
         proc_args.append('--username=' + self.db.dbuser)
+        proc_args.append('--no-password')
 
         proc_env = {'PGPASSWORD': self.db.dbpassword}
+
+        if print_command:
+            print(assemble_command(proc_args, proc_env))
+
+            return
 
         logger.debug(f'Starting backup to {output_path}.')
 
@@ -497,19 +506,27 @@ class DatabaseManager(Manager, name='database'):
         logger.debug('Backup completed.')
 
     @description('connect to database')
+    @argument('--print-command', action='store_true', help='only print the command that would be executed')
     @preflight(database_init=True)
     def client(self, args):
+        print_command = args.print_command
+
         proc_args = ['psql']
         proc_args.append('--dbname=' + str(self.db.dbname))
-        proc_args.append('--no-password')
         proc_args.append('--host=' + self.db.dbhost)
         proc_args.append('--port=' + str(self.db.dbport))
         proc_args.append('--username=' + self.db.dbuser)
+        proc_args.append('--no-password')
 
         proc_env = {'PGPASSWORD': self.db.dbpassword}
 
         if self.db.dbschema is not None:
             proc_env['PGOPTIONS'] = f'-c search_path={self.db.dbschema}'
+
+        if print_command:
+            print(assemble_command(proc_args, proc_env))
+
+            return
 
         logger.debug('Starting database client.')
 
