@@ -894,7 +894,10 @@ class TaskManager(Manager, name='task'):
                                   time_limit_hr=time_limit_hr)
 
     @description('show outstanding tasks')
+    @argument('--blocking', action='store_true', help='include blocking dependencies')
     def health(self, args):
+        show_blocking = args.blocking
+
         @self.db.tx
         def ready_tasks(tx):
             tx.isolate(IsolationLevel.REPEATABLE_READ)
@@ -1022,36 +1025,37 @@ class TaskManager(Manager, name='task'):
 
         print()
 
-        @self.db.tx
-        def blocking_dependencies(tx):
-            return tx.execute('''
-                    SELECT t2.name, COUNT(*) AS count
-                    FROM task t1
-                    JOIN task_state ts1 ON ts1.id = t1.state_id
-                    JOIN task_dependency td ON td.task_id = t1.id
-                    JOIN task t2 ON t2.id = td.dependency_id
-                    JOIN task_state ts2 ON ts2.id = t2.state_id
-                    WHERE ts1.pending
-                    AND NOT (ts2.satisfies_dependency
-                             OR (td.soft AND ts2.satisfies_soft_dependency)
-                             OR ts2.pending)
-                    GROUP BY t2.name
-                    ORDER BY count DESC
-                    LIMIT 5
-                    ''')
+        if show_blocking:
+            @self.db.tx
+            def blocking_dependencies(tx):
+                return tx.execute('''
+                        SELECT t2.name, COUNT(*) AS count
+                        FROM task t1
+                        JOIN task_state ts1 ON ts1.id = t1.state_id
+                        JOIN task_dependency td ON td.task_id = t1.id
+                        JOIN task t2 ON t2.id = td.dependency_id
+                        JOIN task_state ts2 ON ts2.id = t2.state_id
+                        WHERE ts1.pending
+                        AND NOT (ts2.satisfies_dependency
+                                 OR (td.soft AND ts2.satisfies_soft_dependency)
+                                 OR ts2.pending)
+                        GROUP BY t2.name
+                        ORDER BY count DESC
+                        LIMIT 5
+                        ''')
 
-        task_data = []
+            task_data = []
 
-        for task_name, count in blocking_dependencies:
-            task_data.append([task_name, count])
+            for task_name, count in blocking_dependencies:
+                task_data.append([task_name, count])
 
-        if task_data:
-            self.print_table(['Name', 'Blocked dependents'],
-                             reversed(task_data))
-        else:
-            print('No blocking dependencies.')
+            if task_data:
+                self.print_table(['Name', 'Blocked dependents'],
+                                 reversed(task_data))
+            else:
+                print('No blocking dependencies.')
 
-        print()
+            print()
 
         @self.db.tx
         def task_note_history(tx):
