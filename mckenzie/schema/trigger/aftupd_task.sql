@@ -4,20 +4,10 @@
 CREATE OR REPLACE FUNCTION aftupd_task()
 RETURNS trigger AS $$
 DECLARE
-	_note_time_id INTEGER;
-	_note_mem_id INTEGER;
 	_satisfies_dependency_diff INTEGER;
 	_satisfies_soft_dependency_diff INTEGER;
 	_dependent_task_id INTEGER;
 BEGIN
-	SELECT id INTO STRICT _note_time_id
-	FROM task_note
-	WHERE name = 'tn_change_time';
-
-	SELECT id INTO STRICT _note_mem_id
-	FROM task_note
-	WHERE name = 'tn_change_mem';
-
 	SELECT satisfies_dependency_diff INTO _satisfies_dependency_diff
 	FROM task_state_transition
 	WHERE from_state_id = OLD.state_id
@@ -94,17 +84,6 @@ BEGIN
 			SET num_dependencies_satisfied = num_dependencies_satisfied + _satisfies_soft_dependency_diff
 			WHERE id = _dependent_task_id;
 		END LOOP;
-	END IF;
-
-	-- If the time or memory limits have been changed, make a note of this.
-	IF OLD.time_limit != NEW.time_limit THEN
-		INSERT INTO task_note_history (task_id, note_id, note_args)
-		VALUES (NEW.id, _note_time_id, ARRAY[OLD.time_limit, NEW.time_limit]);
-	END IF;
-
-	IF OLD.mem_limit_mb != NEW.mem_limit_mb THEN
-		INSERT INTO task_note_history (task_id, note_id, note_args)
-		VALUES (NEW.id, _note_mem_id, ARRAY[OLD.mem_limit_mb, NEW.mem_limit_mb]);
 	END IF;
 
 	RETURN NULL;

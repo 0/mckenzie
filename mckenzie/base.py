@@ -40,36 +40,6 @@ class DatabaseEnum(IntEnum):
                           f'{item.value}, but expected {expected_value}')
 
 
-class DatabaseView:
-    def __init__(self, db):
-        self.db = db
-
-
-class DatabaseNoteView(DatabaseView):
-    def __init__(self, table_name, history_table_name, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        self.history_table_name = history_table_name
-
-    def format(self, history_id, description_format, arg_types):
-        arg_strings = []
-
-        for i, arg_type in enumerate(arg_types):
-            arg_strings.append(f'note_args[{i+1}]::{arg_type}')
-
-        arg_string = ', '.join(arg_strings)
-
-        @self.db.tx
-        def args(tx):
-            return tx.execute(f'''
-                    SELECT {arg_string}
-                    FROM {self.history_table_name}
-                    WHERE id = %s
-                    ''', (history_id,))
-
-        return description_format.format(*map(format_object, args[0]))
-
-
 def preflight(**kwargs):
     def wrapped(f):
         f._preflight_kwargs = kwargs

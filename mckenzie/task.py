@@ -8,7 +8,7 @@ import os
 import subprocess
 
 from .arguments import argparsable, argument, description
-from .base import DatabaseEnum, DatabaseNoteView, Manager
+from .base import DatabaseEnum, Manager
 from .database import (AdvisoryKey, CheckViolation, IsolationLevel,
                        RaisedException)
 from .util import DirectedAcyclicGraphNode as DAG
@@ -101,11 +101,6 @@ class TaskReason(DatabaseEnum):
     tr_task_rerun_cleaning = 25
     tr_task_rerun_cleaned = 26
     tr_task_rerun_reset = 27
-
-
-class TaskNote(DatabaseNoteView):
-    def __init__(self, *args, **kwargs):
-        super().__init__('task_note', 'task_note_history', *args, **kwargs)
 
 
 class TaskClaimError(Exception):
@@ -218,11 +213,6 @@ class TaskManager(Manager, name='task'):
     def _unsynthesize(cls, conf, task_name):
         return cls._run_cmd(conf.general_work_path, conf.task_unsynthesize_cmd,
                             task_name)
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        self._tn = TaskNote(self.db)
 
     def _format_state(self, state_id):
         state = TaskState(state_id).name
@@ -1023,9 +1013,9 @@ class TaskManager(Manager, name='task'):
         else:
             print('No tasks claimed by non-workers.')
 
-        print()
-
         if show_blocking:
+            print()
+
             @self.db.tx
             def blocking_dependencies(tx):
                 return tx.execute('''
@@ -1054,35 +1044,6 @@ class TaskManager(Manager, name='task'):
                                  reversed(task_data))
             else:
                 print('No blocking dependencies.')
-
-            print()
-
-        @self.db.tx
-        def task_note_history(tx):
-            return tx.execute('''
-                    SELECT tnh.id, tnh.time, tn.description_format,
-                           tn.arg_types, t.name, NOW()
-                    FROM task_note_history tnh
-                    JOIN task_note tn ON tn.id = tnh.note_id
-                    JOIN task t ON t.id = tnh.task_id
-                    ORDER BY tnh.id DESC
-                    LIMIT 5
-                    ''')
-
-        task_data = []
-
-        for (history_id, time, description_format, arg_types, task_name,
-                now) in task_note_history:
-            note_desc = self._tn.format(history_id, description_format,
-                                        arg_types)
-
-            task_data.append([task_name, note_desc,
-                              humanize_datetime(time, now)])
-
-        if task_data:
-            self.print_table(['Name', 'Note', 'Time'], reversed(task_data))
-        else:
-            print('No notes.')
 
     @description('change task state to "held"')
     @argument('--count-limit', metavar='N', type=int, help='stop after N tasks')
@@ -1547,33 +1508,6 @@ class TaskManager(Manager, name='task'):
                              task_data)
         else:
             print('No state history.')
-
-        print()
-
-        @self.db.tx
-        def task_note_history(tx):
-            return tx.execute('''
-                    SELECT tnh.id, tnh.time, tn.description_format,
-                           tn.arg_types
-                    FROM task_note_history tnh
-                    JOIN task_note tn ON tn.id = tnh.note_id
-                    WHERE tnh.task_id = %s
-                    ORDER BY tnh.id
-                    ''', (task_id,))
-
-        task_data = []
-
-        for (history_id, time, description_format,
-                arg_types) in task_note_history:
-            note_desc = self._tn.format(history_id, description_format,
-                                        arg_types)
-
-            task_data.append([time, note_desc])
-
-        if task_data:
-            self.print_table(['Time', 'Note'], task_data)
-        else:
-            print('No notes.')
 
         print()
 
