@@ -13,7 +13,10 @@ CREATE TABLE IF NOT EXISTS worker
 	num_tasks INTEGER NOT NULL DEFAULT 0,
 	num_tasks_active INTEGER NOT NULL DEFAULT 0,
 	cur_mem_usage_mb INTEGER,
-	CONSTRAINT num_tasks CHECK (num_tasks_active <= num_tasks)
+	CONSTRAINT tasks_bound
+		CHECK (0 <= num_tasks
+				AND 0 <= num_tasks_active
+				AND num_tasks_active <= num_tasks)
 );
 
 
