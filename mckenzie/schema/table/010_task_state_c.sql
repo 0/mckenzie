@@ -1,4 +1,8 @@
 UPDATE task_state
+SET terminal = TRUE
+WHERE name IN ('ts_cancelled', 'ts_synthesized', 'ts_cleaned');
+
+UPDATE task_state
 SET exceptional = TRUE
 WHERE name IN ('ts_cancelled', 'ts_held', 'ts_failed');
 

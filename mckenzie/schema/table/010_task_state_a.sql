@@ -2,6 +2,8 @@ CREATE TABLE IF NOT EXISTS task_state
 (
 	id INTEGER PRIMARY KEY,
 	name TEXT NOT NULL UNIQUE,
+	-- Tasks in the state are not expected to leave in a hurry.
+	terminal BOOLEAN NOT NULL DEFAULT FALSE,
 	-- Tasks in the state must be handled manually.
 	exceptional BOOLEAN NOT NULL DEFAULT FALSE,
 	-- Tasks in the state have run successfully and not been cleaned.

@@ -225,7 +225,8 @@ class TaskManager(Manager, name='task'):
             color = self.c('notice')
         elif state == 'ts_running':
             color = self.c('good')
-        elif state in ['ts_held', 'ts_done', 'ts_cleanable', 'ts_cleaning']:
+        elif state not in ['ts_cancelled', 'ts_synthesized', 'ts_cleaned']:
+            # NOT task_state.terminal
             color = self.c('warning')
 
         return state, state_user, color
@@ -314,6 +315,7 @@ class TaskManager(Manager, name='task'):
                             query += ' AND t.state_id = %s'
                             query_args += (from_state_id,)
                         else:
+                            query += ' AND NOT ts.terminal'
                             query += ' AND NOT ts.exceptional'
 
                         query += '''
@@ -877,7 +879,7 @@ class TaskManager(Manager, name='task'):
         name_pattern = args.name_pattern
         names = args.name
 
-        self._simple_state_change(None,
+        self._simple_state_change(TaskState.ts_synthesized,
                                   TaskState.ts_cleanable,
                                   TaskReason.tr_task_cleanablize,
                                   name_pattern, names, count_limit=count_limit,
