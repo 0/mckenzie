@@ -886,13 +886,27 @@ class TaskManager(Manager, name='task'):
                                   time_limit_hr=time_limit_hr)
 
     @description('show outstanding tasks')
+    @argument('--prefix-separator', metavar='S', help='task name prefix separator string')
     @argument('--blocking', action='store_true', help='include blocking dependencies')
     def health(self, args):
+        prefix_separator = args.prefix_separator
         show_blocking = args.blocking
 
         @self.db.tx
         def ready_tasks(tx):
             tx.isolate(IsolationLevel.REPEATABLE_READ)
+
+            if prefix_separator is not None:
+                prefix_counts = tx.execute('''
+                        SELECT SPLIT_PART(name, %s, 1) AS prefix,
+                               COUNT(*) AS count
+                        FROM task
+                        WHERE state_id = %s
+                        GROUP BY prefix
+                        ORDER BY prefix
+                        ''', (prefix_separator, TaskState.ts_ready))
+            else:
+                prefix_counts = None
 
             by_time = tx.execute('''
                     (
@@ -973,12 +987,17 @@ class TaskManager(Manager, name='task'):
                     ORDER BY bucket
                     ''', (TaskState.ts_ready,))
 
-            return by_time, by_mem, times, mems
+            return prefix_counts, by_time, by_mem, times, mems
 
-        (ready_tasks_by_time, ready_tasks_by_mem, ready_task_times,
-                ready_task_mems) = ready_tasks
+        (prefix_counts, ready_tasks_by_time, ready_tasks_by_mem,
+                ready_task_times, ready_task_mems) = ready_tasks
 
         if ready_tasks_by_time:
+            if prefix_counts is not None:
+                self.print_table(['Prefix', 'Count'], prefix_counts)
+
+                print()
+
             # If there are at least 7 tasks to choose from, we can remove the
             # middle one from those we've obtained and know that at least one
             # is missing. Otherwise, we show all ready tasks.
