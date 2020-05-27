@@ -86,10 +86,10 @@ class DebugManager(Manager, name='debug'):
                         SELECT t1.name,
                                t1.num_dependencies_satisfied AS expected,
                                COUNT(*) FILTER
-                                 (WHERE ts2.satisfies_dependency
-                                  OR (td.soft
-                                      AND ts2.satisfies_soft_dependency))
-                                 AS actual
+                                   (WHERE ts2.satisfies_dependency
+                                    OR (td.soft
+                                        AND ts2.satisfies_soft_dependency))
+                                   AS actual
                         FROM task t1
                         JOIN task_dependency td ON td.task_id = t1.id
                         JOIN task t2 ON t2.id = td.dependency_id

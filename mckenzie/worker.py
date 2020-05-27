@@ -1023,7 +1023,7 @@ class WorkerManager(Manager, name='worker'):
                     SELECT num_cores, time_limit, mem_limit_mb,
                            MAX(time_start), NOW(),
                            ARRAY_AGG(task_name_pattern) FILTER
-                             (WHERE state_id = %s),
+                               (WHERE state_id = %s),
                            COUNT(*) FILTER (WHERE state_id = %s)
                     FROM worker
                     GROUP BY num_cores, time_limit, mem_limit_mb

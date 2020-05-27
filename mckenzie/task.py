@@ -733,9 +733,9 @@ class TaskManager(Manager, name='task'):
                     # point in time satisfied the criteria.
                     @self.db.tx
                     def task(tx):
-                        # If there are no dependent tasks, the left joins in
+                        # If there are no dependent tasks, the LEFT JOINs in
                         # the inner-most subquery will populate columns of td,
-                        # t2, and ts2 will NULL, so we must be ready to accept
+                        # t2, and ts2 with NULL, so we must be ready to accept
                         # such rows.
                         return tx.execute('''
                                 WITH next_task AS (
@@ -1628,7 +1628,8 @@ class TaskManager(Manager, name='task'):
         if num_recursive_dependents == 1:
             print('1 dependent.')
         elif num_recursive_dependents > 1:
-            print(f'{num_recursive_dependents} dependents ({num_direct_dependents} direct).')
+            print(f'{num_recursive_dependents} dependents '
+                  f'({num_direct_dependents} direct).')
         else:
             print('No dependents.')
 
