@@ -1015,6 +1015,36 @@ class TaskManager(Manager, name='task'):
         else:
             print('No tasks claimed by non-workers.')
 
+        print()
+
+        @self.db.tx
+        def claimed_nonrunning_tasks(tx):
+            return tx.execute('''
+                    SELECT name, state_id, parse_claim(claimed_by),
+                           claimed_since, NOW() - claimed_since AS claimed_for
+                    FROM task t
+                    WHERE claimed_by IS NOT NULL
+                    AND parse_claim_type(claimed_by) = 'worker'
+                    AND state_id != %s
+                    ORDER BY claimed_for DESC, id
+                    LIMIT 5
+                    ''', (TaskState.ts_running,))
+
+        task_data = []
+
+        for (name, state_id, claimed_by, claimed_since,
+                claimed_for) in claimed_nonrunning_tasks:
+            state, state_user, state_color = self._format_state(state_id)
+
+            task_data.append([name, (state_user, state_color), claimed_by,
+                              claimed_since, claimed_for])
+
+        if task_data:
+            self.print_table(['Name', 'State', 'Claimed by', 'Since', 'For'],
+                             reversed(task_data))
+        else:
+            print('No non-running tasks claimed by workers.')
+
         if show_blocking:
             print()
 
