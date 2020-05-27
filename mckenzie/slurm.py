@@ -67,33 +67,36 @@ def check_scancel(proc, *, log, stacklevel=1):
 
     return None
 
-def cancel_job(slurm_job_id, *, name, signal, log, stacklevel=1):
-    # Try to cancel it before it gets a chance to run.
-    proc = subprocess.run(['scancel', '--verbose', '--state=PENDING',
-                           f'--jobname={name}', str(slurm_job_id)],
-                          capture_output=True, text=True)
-    cancel_success = check_scancel(proc, log=log, stacklevel=stacklevel+1)
+def cancel_job(slurm_job_id, *, name, signal, log, pending=True, running=True,
+               stacklevel=1):
+    if pending:
+        # Try to cancel it before it gets a chance to run.
+        proc = subprocess.run(['scancel', '--verbose', '--state=PENDING',
+                               f'--jobname={name}', str(slurm_job_id)],
+                              capture_output=True, text=True)
+        cancel_success = check_scancel(proc, log=log, stacklevel=stacklevel+1)
 
-    if cancel_success is None:
-        # We encountered an error, so give up.
-        raise HandledException()
-    elif cancel_success:
-        # Successfully cancelled pending job.
-        return True, False
+        if cancel_success is None:
+            # We encountered an error, so give up.
+            raise HandledException()
+        elif cancel_success:
+            # Successfully cancelled pending job.
+            return True, False
 
-    # It's already running (or finished), so try to send a signal.
-    proc = subprocess.run(['scancel', '--verbose', '--state=RUNNING',
-                           '--batch', f'--signal={signal}',
-                           f'--jobname={name}', str(slurm_job_id)],
-                          capture_output=True, text=True)
-    signal_success = check_scancel(proc, log=log, stacklevel=stacklevel+1)
+    if running:
+        # It's already running (or finished), so try to send a signal.
+        proc = subprocess.run(['scancel', '--verbose', '--state=RUNNING',
+                               '--batch', f'--signal={signal}',
+                               f'--jobname={name}', str(slurm_job_id)],
+                              capture_output=True, text=True)
+        signal_success = check_scancel(proc, log=log, stacklevel=stacklevel+1)
 
-    if signal_success is None:
-        # We encountered an error, so give up.
-        raise HandledException()
-    elif signal_success:
-        # Successfully signalled running job.
-        return True, True
+        if signal_success is None:
+            # We encountered an error, so give up.
+            raise HandledException()
+        elif signal_success:
+            # Successfully signalled running job.
+            return True, True
 
     return False, None
 

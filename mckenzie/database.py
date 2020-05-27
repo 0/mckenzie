@@ -11,6 +11,7 @@ import time
 
 import pkg_resources
 import psycopg2
+import psycopg2.extras
 from psycopg2 import errorcodes
 
 from . import slurm
@@ -181,7 +182,7 @@ class Transaction:
 
 class Database:
     # Current schema version. Must be increased when the schema is modified.
-    SCHEMA_VERSION = 11
+    SCHEMA_VERSION = 12
 
     # How many times to retry in case of deadlock.
     NUM_RETRIES = 32
@@ -275,6 +276,9 @@ class Database:
     @property
     def conn(self):
         if self._conn is None:
+            # Automatically convert Python dictionaries to JSON objects.
+            psycopg2.extensions.register_adapter(dict, psycopg2.extras.Json)
+
             logger.debug('Connecting to database.')
             kwargs = {'dbname': self.dbname, 'user': self.dbuser,
                       'password': self.dbpassword, 'host': self.dbhost,

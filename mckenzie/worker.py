@@ -1,6 +1,6 @@
 from concurrent import futures
 from datetime import datetime, timedelta
-from enum import unique
+from enum import IntEnum, unique
 import logging
 from math import ceil, floor
 import os
@@ -76,6 +76,12 @@ class WorkerReason(DatabaseEnum):
     wr_worker_clean_running = 11
 
 
+@unique
+class WorkerMessage(IntEnum):
+    wm_quit = 1
+    wm_abort = 2
+
+
 class Worker(Instance):
     NUM_EXECUTE_RETRIES = 4
 
@@ -98,6 +104,11 @@ class Worker(Instance):
     def __init__(self, slurm_job_id, worker_cpus, worker_mem_mb,
                  time_end_projected, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+        self.MESSAGE_HANDLERS = {
+            WorkerMessage.wm_quit: self.quit,
+            WorkerMessage.wm_abort: self.abort,
+        }
 
         self.slurm_job_id = slurm_job_id
         self.worker_cpus = worker_cpus
@@ -149,7 +160,7 @@ class Worker(Instance):
     def remaining_mem_mb(self):
         return self.worker_mem_mb - sum(self.task_mems_mb.values())
 
-    def quit(self, signum=None, frame=None):
+    def quit(self):
         if self.quitting:
             return
 
@@ -345,6 +356,20 @@ class Worker(Instance):
         rss_fail_warn = False
 
         while not self.done:
+            # Check messages.
+            @self.db.tx
+            def new_messages(tx):
+                return tx.execute('''
+                        UPDATE worker_message
+                        SET read_at = NOW()
+                        WHERE worker_id = %s
+                        AND read_at IS NULL
+                        RETURNING type_id, args
+                        ''', (self.slurm_job_id,))
+
+            for message_type_id, args in new_messages:
+                self.MESSAGE_HANDLERS[message_type_id](**args)
+
             if self.remaining_time.total_seconds() < self.GIVE_UP_SECONDS:
                 # Too little time remaining in job, so we will not take on any
                 # more tasks.
@@ -1059,9 +1084,9 @@ class WorkerManager(Manager, name='worker'):
                           'Most recent start', 'Patterns'],
                          worker_data)
 
-    @description('signal worker job to quit')
+    @description('request worker job to quit')
     @argument('--abort', action='store_true', help='quit immediately, killing running tasks')
-    @argument('--all', action='store_true', help='signal all worker jobs')
+    @argument('--all', action='store_true', help='request all worker jobs')
     @argument('--state', metavar='S', help='only workers in state S for "--all"')
     @argument('slurm_job_id', nargs='*', type=int, help='Slurm job ID of worker')
     def quit(self, args):
@@ -1071,9 +1096,9 @@ class WorkerManager(Manager, name='worker'):
         slurm_job_ids = set(args.slurm_job_id)
 
         if abort:
-            signal = 'TERM'
+            message_type_id = WorkerMessage.wm_abort
         else:
-            signal = 'INT'
+            message_type_id = WorkerMessage.wm_quit
 
         state_id = self._parse_state(state_name)
 
@@ -1102,29 +1127,35 @@ class WorkerManager(Manager, name='worker'):
             if self.mck.interrupted:
                 break
 
+            # Only try to cancel pending jobs.
             logger.debug(f'Attempting to cancel worker {slurm_job_id}.')
             cancel_success, signalled_running \
                     = slurm.cancel_job(slurm_job_id,
                                        name=self.conf.worker_job_name,
-                                       signal=signal, log=logger.error)
+                                       signal=signal, log=logger.error,
+                                       running=False)
+
+            logger.info(slurm_job_id)
 
             if cancel_success:
-                logger.info(slurm_job_id)
-
-                if signalled_running:
-                    # Signalled running.
-                    pass
-                else:
-                    # Cancelled pending.
-                    @self.db.tx
-                    def F(tx):
-                        tx.execute('''
-                                INSERT INTO worker_history (worker_id,
-                                                            state_id,
-                                                            reason_id)
-                                VALUES (%s, %s, %s)
-                                ''', (slurm_job_id, WorkerState.ws_cancelled,
-                                      WorkerReason.wr_worker_quit_cancelled))
+                @self.db.tx
+                def F(tx):
+                    tx.execute('''
+                            INSERT INTO worker_history (worker_id, state_id,
+                                                        reason_id)
+                            VALUES (%s, %s, %s)
+                            ''', (slurm_job_id, WorkerState.ws_cancelled,
+                                  WorkerReason.wr_worker_quit_cancelled))
+            else:
+                # If we couldn't cancel it, we assume that it's running and
+                # send it a message.
+                @self.db.tx
+                def F(tx):
+                    tx.execute('''
+                            INSERT INTO worker_message (worker_id, type_id,
+                                                        args)
+                            VALUES (%s, %s, %s)
+                            ''', (slurm_job_id, message_type_id, {}))
 
     @description('run worker inside Slurm job')
     # Prefer to wait for the database to become available rather than quitting
@@ -1178,7 +1209,6 @@ class WorkerManager(Manager, name='worker'):
         worker = Worker(slurm_job_id, worker_cpus, worker_mem_mb,
                         time_end_projected, self)
 
-        signal.signal(signal.SIGINT, worker.quit)
         signal.signal(signal.SIGTERM, worker.abort)
 
         try:
@@ -1187,7 +1217,6 @@ class WorkerManager(Manager, name='worker'):
         finally:
             logger.info('Worker done.')
 
-            signal.signal(signal.SIGINT, signal.SIG_DFL)
             signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
             if not worker.clean_exit:
