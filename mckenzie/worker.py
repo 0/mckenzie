@@ -1103,14 +1103,10 @@ class WorkerManager(Manager, name='worker'):
                 break
 
             logger.debug(f'Attempting to cancel worker {slurm_job_id}.')
-            cancel_result = slurm.cancel_job(slurm_job_id,
-                                             name=self.conf.worker_job_name,
-                                             signal=signal, log=logger.error)
-
-            if cancel_result is None:
-                return
-
-            cancel_success, signalled_running = cancel_result
+            cancel_success, signalled_running \
+                    = slurm.cancel_job(slurm_job_id,
+                                       name=self.conf.worker_job_name,
+                                       signal=signal, log=logger.error)
 
             if cancel_success:
                 logger.info(slurm_job_id)
