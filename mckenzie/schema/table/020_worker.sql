@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS worker
 	num_cores INTEGER NOT NULL,
 	time_limit INTERVAL NOT NULL,
 	mem_limit_mb INTEGER NOT NULL,
+	task_name_pattern TEXT,
 	node TEXT,
 	time_start TIMESTAMP WITH TIME ZONE,
 	heartbeat TIMESTAMP WITH TIME ZONE,

@@ -169,12 +169,20 @@ class Worker(Instance):
         self.done = True
         self.done_due_to_abort = True
 
-    def _choose_task(self):
+    def _choose_task(self, task_name_pattern):
         remaining_mem_mb = self.worker_mem_mb - sum(self.task_mems_mb.values())
+
+        query_args = TaskState.ts_ready, self.remaining_time, remaining_mem_mb
+
+        if task_name_pattern is not None:
+            name_clause = ' AND name LIKE %s'
+            query_args += (task_name_pattern,)
+        else:
+            name_clause = ''
 
         @self.db.tx
         def task(tx):
-            return tx.execute('''
+            return tx.execute(f'''
                     WITH chosen_task AS (
                         SELECT id, name, mem_limit_mb
                         FROM task
@@ -182,6 +190,7 @@ class Worker(Instance):
                         AND claimed_by IS NULL
                         AND time_limit < %s
                         AND mem_limit_mb < %s
+                        {name_clause}
                         ORDER BY priority DESC, mem_limit_mb DESC,
                                  time_limit DESC
                         LIMIT 1
@@ -190,8 +199,7 @@ class Worker(Instance):
                     SELECT id, name, mem_limit_mb
                     FROM chosen_task
                     WHERE task_claim(id)
-                    ''', (TaskState.ts_ready, self.remaining_time,
-                          remaining_mem_mb))
+                    ''', query_args)
 
         if len(task) == 0:
             return None
@@ -364,10 +372,19 @@ class Worker(Instance):
                     except ProcessLookupError:
                         pass
 
+            # Get current pattern.
+            @self.db.tx
+            def task_name_pattern(tx):
+                return tx.execute('''
+                        SELECT task_name_pattern
+                        FROM worker
+                        WHERE id = %s
+                        ''', (self.slurm_job_id,))[0][0]
+
             # Fill up with tasks.
             while (not self.quitting
                     and len(self.fut_executing) < self.worker_cpus):
-                task = self._choose_task()
+                task = self._choose_task(task_name_pattern)
 
                 if task is None:
                     break
@@ -825,10 +842,11 @@ class WorkerManager(Manager, name='worker'):
         def workers(tx):
             query = '''
                     SELECT w.id, w.state_id, ws.job_exists, ws.job_running,
-                           w.num_cores, w.time_limit, w.mem_limit_mb, w.node,
-                           w.time_start, w.time_end, w.num_tasks,
-                           w.num_tasks_active, w.cur_mem_usage_mb,
-                           worker_timeout(w, %s), NOW() - w.time_start
+                           w.num_cores, w.time_limit, w.mem_limit_mb,
+                           w.task_name_pattern, w.node, w.time_start,
+                           w.time_end, w.num_tasks, w.num_tasks_active,
+                           w.cur_mem_usage_mb, worker_timeout(w, %s),
+                           NOW() - w.time_start
                     FROM worker w
                     JOIN worker_state ws ON ws.id = w.state_id
                     '''
@@ -854,9 +872,9 @@ class WorkerManager(Manager, name='worker'):
         worker_data = []
 
         for (slurm_job_id, state_id, job_exists, job_running, num_cores,
-                time_limit, mem_limit_mb, node, time_start, time_end,
-                num_tasks, num_tasks_active, cur_mem_usage_mb, timeout,
-                elapsed_time) in workers:
+                time_limit, mem_limit_mb, task_name_pattern, node, time_start,
+                time_end, num_tasks, num_tasks_active, cur_mem_usage_mb,
+                timeout, elapsed_time) in workers:
             state, state_user, state_color \
                     = self._format_state(state_id, job_running, timeout)
 
@@ -910,10 +928,12 @@ class WorkerManager(Manager, name='worker'):
                                 node, remaining_time, time_limit,
                                 tasks_running_show, num_cores,
                                 tasks_percent_str, num_tasks, cur_mem_usage_gb,
-                                mem_limit_gb, cur_mem_usage_percent_str])
+                                mem_limit_gb, cur_mem_usage_percent_str,
+                                task_name_pattern])
 
         self.print_table(['Job ID', 'State', 'Node', ('Time (R/T)', 2),
-                          ('Tasks (R/C/%/T)', 4), ('Mem (GB;U/T/%)', 3)],
+                          ('Tasks (R/C/%/T)', 4), ('Mem (GB;U/T/%)', 3),
+                          'Pattern'],
                          worker_data)
 
     @description('list completed worker jobs')
@@ -983,17 +1003,19 @@ class WorkerManager(Manager, name='worker'):
             return tx.execute('''
                     SELECT num_cores, time_limit, mem_limit_mb,
                            MAX(time_start), NOW(),
-                           COUNT(CASE WHEN state_id = %s THEN 1 END)
+                           ARRAY_AGG(task_name_pattern) FILTER
+                             (WHERE state_id = %s),
+                           COUNT(*) FILTER (WHERE state_id = %s)
                     FROM worker
                     GROUP BY num_cores, time_limit, mem_limit_mb
                     ORDER BY MAX(time_start) NULLS FIRST,
                              num_cores, time_limit, mem_limit_mb
-                    ''', (WorkerState.ws_queued,))
+                    ''', (WorkerState.ws_queued, WorkerState.ws_queued))
 
         worker_data = []
 
         for (num_cores, time_limit, mem_limit_mb, max_time_start, now,
-                count) in workers:
+                task_name_patterns, count) in workers:
             mem_limit_gb = ceil(mem_limit_mb / 1024)
 
             if max_time_start is not None:
@@ -1001,14 +1023,21 @@ class WorkerManager(Manager, name='worker'):
             else:
                 max_time_start = '-'
 
+            if task_name_patterns is not None:
+                patterns_raw = set(task_name_patterns)
+                patterns = [x if x is not None else '%' for x in patterns_raw]
+                patterns_str = ', '.join(sorted(patterns))
+            else:
+                patterns_str = ''
+
             if count == 0:
                 count = '-'
 
             worker_data.append([num_cores, time_limit, mem_limit_gb, count,
-                                max_time_start])
+                                max_time_start, patterns_str])
 
         self.print_table(['Cores', 'Time', 'Mem (GB)', 'Count',
-                          'Most recent start'],
+                          'Most recent start', 'Patterns'],
                          worker_data)
 
     @description('signal worker job to quit')
@@ -1315,12 +1344,14 @@ class WorkerManager(Manager, name='worker'):
     @argument('--time-hr', metavar='T', type=float, required=True, help='time limit in hours')
     @argument('--mem-gb', metavar='M', type=float, required=True, help='amount of memory in GB')
     @argument('--sbatch-args', metavar='SA', help='additional arguments to pass to sbatch')
+    @argument('--task-name-pattern', metavar='P', help='only run tasks with names matching the SQL LIKE pattern P')
     @argument('--num', type=int, default=1, help='number of workers to spawn (default: 1)')
     def spawn(self, args):
         worker_cpus = args.cpus
         worker_time_hours = args.time_hr
         worker_mem_gb = args.mem_gb
         sbatch_args = args.sbatch_args
+        task_name_pattern = args.task_name_pattern
         num = args.num
 
         if num < 1:
@@ -1371,10 +1402,11 @@ class WorkerManager(Manager, name='worker'):
             def F(tx):
                 tx.execute('''
                         INSERT INTO worker (id, state_id, num_cores,
-                                            time_limit, mem_limit_mb)
-                        VALUES (%s, %s, %s, %s, %s)
+                                            time_limit, mem_limit_mb,
+                                            task_name_pattern)
+                        VALUES (%s, %s, %s, %s, %s, %s)
                         ''', (slurm_job_id, WorkerState.ws_queued, worker_cpus,
-                              worker_time, worker_mem_mb))
+                              worker_time, worker_mem_mb, task_name_pattern))
 
                 tx.execute('''
                         INSERT INTO worker_history (worker_id, state_id,
