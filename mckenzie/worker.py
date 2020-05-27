@@ -145,6 +145,10 @@ class Worker(Instance):
     def remaining_time(self):
         return self.time_end_projected - datetime.now()
 
+    @property
+    def remaining_mem_mb(self):
+        return self.worker_mem_mb - sum(self.task_mems_mb.values())
+
     def quit(self, signum=None, frame=None):
         if self.quitting:
             return
@@ -170,9 +174,8 @@ class Worker(Instance):
         self.done_due_to_abort = True
 
     def _choose_task(self, task_name_pattern):
-        remaining_mem_mb = self.worker_mem_mb - sum(self.task_mems_mb.values())
-
-        query_args = TaskState.ts_ready, self.remaining_time, remaining_mem_mb
+        query_args = (TaskState.ts_ready, self.remaining_time,
+                      self.remaining_mem_mb)
 
         if task_name_pattern is not None:
             name_clause = ' AND name LIKE %s'
@@ -361,16 +364,32 @@ class Worker(Instance):
                         logger.warning('Failed to get memory usage for task '
                                        f'"{task_name}" ({pid}).')
                 elif rss_mb > limit_mb:
-                    logger.info(f'Killing task "{task_name}" ({pid}) for '
-                                'using too much memory '
-                                f'({rss_mb} MB > {limit_mb} MB).')
+                    if self.remaining_mem_mb <= rss_mb - limit_mb:
+                        logger.info(f'Killing task "{task_name}" ({pid}) for '
+                                    'using too much memory '
+                                    f'({rss_mb} MB > {limit_mb} MB).')
 
-                    self.overmemory_mb[task_name] = rss_mb
+                        self.overmemory_mb[task_name] = rss_mb
 
-                    try:
-                        os.killpg(pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
+                        try:
+                            os.killpg(pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    else:
+                        logger.info('Extending memory limit for task '
+                                    f'"{task_name}" from {limit_mb} MB to '
+                                    f'{rss_mb} MB.')
+
+                        self.task_mems_mb[task_name] = rss_mb
+
+                        @self.db.tx
+                        def F(tx):
+                            tx.execute('''
+                                    UPDATE task
+                                    SET mem_limit_mb = %s
+                                    WHERE name = %s
+                                    AND mem_limit_mb < %s
+                                    ''', (rss_mb, task_name, rss_mb))
 
             # Get current pattern.
             @self.db.tx
