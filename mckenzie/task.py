@@ -894,21 +894,47 @@ class TaskManager(Manager, name='task'):
         def ready_tasks(tx):
             tx.isolate(IsolationLevel.REPEATABLE_READ)
 
-            longest = tx.execute('''
-                    SELECT name, state_id, priority, time_limit, mem_limit_mb
-                    FROM task
-                    WHERE state_id = %s
-                    ORDER BY time_limit DESC, id
-                    LIMIT 5
-                    ''', (TaskState.ts_ready,))
+            by_time = tx.execute('''
+                    (
+                        SELECT name, state_id, priority, time_limit,
+                               mem_limit_mb
+                        FROM task
+                        WHERE state_id = %s
+                        ORDER BY time_limit ASC, id ASC
+                        LIMIT 4
+                    )
+                    UNION
+                    (
+                        SELECT name, state_id, priority, time_limit,
+                               mem_limit_mb
+                        FROM task
+                        WHERE state_id = %s
+                        ORDER BY time_limit DESC, id DESC
+                        LIMIT 3
+                    )
+                    ORDER BY time_limit
+                    ''', (TaskState.ts_ready, TaskState.ts_ready))
 
-            largest = tx.execute('''
-                    SELECT name, state_id, priority, time_limit, mem_limit_mb
-                    FROM task
-                    WHERE state_id = %s
-                    ORDER BY mem_limit_mb DESC, id
-                    LIMIT 5
-                    ''', (TaskState.ts_ready,))
+            by_mem = tx.execute('''
+                    (
+                        SELECT name, state_id, priority, time_limit,
+                               mem_limit_mb
+                        FROM task
+                        WHERE state_id = %s
+                        ORDER BY mem_limit_mb ASC, id ASC
+                        LIMIT 4
+                    )
+                    UNION
+                    (
+                        SELECT name, state_id, priority, time_limit,
+                               mem_limit_mb
+                        FROM task
+                        WHERE state_id = %s
+                        ORDER BY mem_limit_mb DESC, id DESC
+                        LIMIT 3
+                    )
+                    ORDER BY mem_limit_mb
+                    ''', (TaskState.ts_ready, TaskState.ts_ready))
 
             times = tx.execute('''
                     WITH time (seconds) AS (
@@ -947,37 +973,54 @@ class TaskManager(Manager, name='task'):
                     ORDER BY bucket
                     ''', (TaskState.ts_ready,))
 
-            return longest, largest, times, mems
+            return by_time, by_mem, times, mems
 
-        (longest_ready_tasks, largest_ready_tasks, ready_task_times,
+        (ready_tasks_by_time, ready_tasks_by_mem, ready_task_times,
                 ready_task_mems) = ready_tasks
 
-        if longest_ready_tasks:
+        if ready_tasks_by_time:
+            # If there are at least 7 tasks to choose from, we can remove the
+            # middle one from those we've obtained and know that at least one
+            # is missing. Otherwise, we show all ready tasks.
+            if len(ready_tasks_by_time) == 7:
+                ready_tasks_by_time[3] = [None] * 5
+                ready_tasks_by_mem[3] = [None] * 5
+
             task_data = []
 
             for (name, state_id, priority, time_limit,
-                    mem_limit_mb) in longest_ready_tasks:
+                    mem_limit_mb) in ready_tasks_by_time:
+                if name is None:
+                    task_data.append(Ellipsis)
+
+                    continue
+
                 state, state_user, state_color = self._format_state(state_id)
 
                 task_data.append([name, (state_user, state_color), priority,
                                   (time_limit, self.c('bold')), mem_limit_mb])
 
             self.print_table(['Name', 'State', 'Priority', 'Time', 'Mem (MB)'],
-                             reversed(task_data))
+                             task_data)
 
             print()
 
             task_data = []
 
             for (name, state_id, priority, time_limit,
-                    mem_limit_mb) in largest_ready_tasks:
+                    mem_limit_mb) in ready_tasks_by_mem:
+                if name is None:
+                    task_data.append(Ellipsis)
+
+                    continue
+
                 state, state_user, state_color = self._format_state(state_id)
 
                 task_data.append([name, (state_user, state_color), priority,
                                   time_limit, (mem_limit_mb, self.c('bold'))])
 
             self.print_table(['Name', 'State', 'Priority', 'Time', 'Mem (MB)'],
-                             reversed(task_data))
+                             task_data)
 
             print()
 
