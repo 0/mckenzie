@@ -52,6 +52,7 @@ def format_timedelta(td):
 
 FORMAT_FUNCTIONS = defaultdict(lambda: str, {
     datetime: format_datetime,
+    type(Ellipsis): lambda x: '...',
     int: format_int,
     timedelta: format_timedelta,
     type(None): lambda x: '',
@@ -77,11 +78,16 @@ def print_table(pre_header, pre_data, *, reset_str, total=None):
         else:
             header.append((heading, 1))
 
-    # Convert all data entries to tuples.
+    num_cols = sum(heading[1] for heading in header)
+
+    # Convert all data entries to tuples and expand ellipses.
     data = []
 
     for row in pre_data:
         data_row = []
+
+        if row is Ellipsis:
+            row = [Ellipsis] * num_cols
 
         for elem in row:
             if isinstance(elem, tuple):
@@ -92,7 +98,6 @@ def print_table(pre_header, pre_data, *, reset_str, total=None):
         data.append(data_row)
 
     num_rows = len(data)
-    num_cols = sum(heading[1] for heading in header)
 
     # Format data.
     data_str = []
