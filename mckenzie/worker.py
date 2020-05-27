@@ -1231,7 +1231,8 @@ class WorkerManager(Manager, name='worker'):
         @self.db.tx
         def worker(tx):
             return tx.execute('''
-                    SELECT num_cores, time_limit, mem_limit_mb, node, heartbeat
+                    SELECT num_cores, time_limit, mem_limit_mb, node,
+                           heartbeat, NOW()
                     FROM worker
                     WHERE id = %s
                     ''', (slurm_job_id,))
@@ -1241,11 +1242,15 @@ class WorkerManager(Manager, name='worker'):
 
             return
 
-        num_cores, time_limit, mem_limit_mb, node, heartbeat = worker[0]
+        num_cores, time_limit, mem_limit_mb, node, heartbeat, now = worker[0]
 
         mem_limit_gb = ceil(mem_limit_mb / 1024)
         node = node if node is not None else '-'
-        heartbeat = heartbeat if heartbeat is not None else '-'
+
+        if heartbeat is not None:
+            heartbeat = humanize_datetime(heartbeat, now)
+        else:
+            heartbeat = '-'
 
         self.print_table(['Job ID', 'Cores', 'Time', 'Mem (GB)', 'Node',
                           'Heartbeat'],
