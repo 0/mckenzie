@@ -46,6 +46,13 @@ class CheckViolation(DatabaseError):
         self.constraint_name = constraint_name
 
 
+class ForeignKeyViolation(DatabaseError):
+    def __init__(self, constraint_name):
+        super().__init__()
+
+        self.constraint_name = constraint_name
+
+
 @unique
 class IsolationLevel(Enum):
     READ_UNCOMMITTED = auto()
@@ -84,6 +91,8 @@ class Transaction:
         except psycopg2.IntegrityError as e:
             if e.pgcode == errorcodes.CHECK_VIOLATION:
                 raise CheckViolation(e.diag.constraint_name)
+            elif e.pgcode == errorcodes.FOREIGN_KEY_VIOLATION:
+                raise ForeignKeyViolation(e.diag.constraint_name)
             else:
                 raise
 

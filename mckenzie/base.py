@@ -80,15 +80,18 @@ class Manager(Agent):
         return cls._registry[name]
 
     @classmethod
-    def add_cmdline_parser(cls, p_sub):
-        p_mgr = p_sub.add_parser(cls.name, help=cls._argparse_desc)
-        p_mgr_sub = p_mgr.add_subparsers(dest='subcommand')
+    def add_cmdline_parser(cls, p_sub, *, level):
+        p_mgr = p_sub.add_parser(cls.name.rsplit('.', maxsplit=1)[-1],
+                                 help=cls._argparse_desc)
+        p_mgr_sub = p_mgr.add_subparsers(dest='sub' * level + 'command')
 
         for name, (desc, args) in cls._argparse_subcommands.items():
             p_mgr_cmd = p_mgr_sub.add_parser(name, help=desc)
 
             for args, kwargs in args:
                 p_mgr_cmd.add_argument(*args, **kwargs)
+
+        return p_mgr_sub
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

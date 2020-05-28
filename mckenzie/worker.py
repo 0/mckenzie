@@ -14,6 +14,7 @@ from time import sleep
 from . import slurm
 from .arguments import argparsable, argument, description
 from .base import DatabaseEnum, Instance, Manager, preflight
+from .database import ForeignKeyViolation
 from .task import TaskManager, TaskReason, TaskState
 from .util import HandledException, humanize_datetime, mem_rss_mb
 
@@ -80,6 +81,13 @@ class WorkerReason(DatabaseEnum):
 class WorkerMessage(IntEnum):
     wm_quit = 1
     wm_abort = 2
+
+    def user(s):
+        # Drop "wm_" prefix.
+        return s[3:]
+
+    def unuser(s):
+        return 'wm_' + s
 
 
 class Worker(Instance):
@@ -1466,3 +1474,56 @@ class WorkerManager(Manager, name='worker'):
 
             logger.debug(f'Releasing worker job {slurm_job_id}.')
             slurm.release_job(slurm_job_id, log=logger.error)
+
+
+@argparsable('worker debugging')
+class WorkerDebugManager(Manager, name='worker.debug'):
+    def _parse_message_type(self, message_type_name):
+        if message_type_name is None:
+            return None
+
+        try:
+            return WorkerMessage[WorkerMessage.unuser(message_type_name)]
+        except KeyError:
+            logger.error(f'Invalid message type "{message_type_name}".')
+
+            raise HandledException()
+
+    def summary(self, args):
+        logger.info('No action specified.')
+
+    @description('send a message to workers')
+    @argument('--type', metavar='T', required=True, help='type of message')
+    @argument('--args', metavar='A', required=True, help='message args as a JSON string')
+    @argument('slurm_job_id', nargs='*', type=int, help='Slurm job ID of worker')
+    def send_message(self, args):
+        message_type_id = self._parse_message_type(args.type)
+        message_args = args.args
+        slurm_job_ids = set(args.slurm_job_id)
+
+        for slurm_job_id in slurm_job_ids:
+            if self.mck.interrupted:
+                break
+
+            @self.db.tx
+            def success(tx):
+                try:
+                    tx.execute('''
+                            INSERT INTO worker_message (worker_id, type_id,
+                                                        args)
+                            VALUES (%s, %s, %s)
+                            ''', (slurm_job_id, message_type_id, message_args))
+                except ForeignKeyViolation as e:
+                    if e.constraint_name == 'worker_message_worker_id_fkey':
+                        logger.error(f'Worker "{slurm_job_id}" does not '
+                                     'exist.')
+                        tx.rollback()
+
+                        return False
+                    else:
+                        raise
+
+                return True
+
+            if success:
+                logger.info(slurm_job_id)

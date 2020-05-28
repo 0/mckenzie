@@ -55,10 +55,19 @@ class McKenzie:
             p.add_argument('-v', '--verbose', action='count', help='increase log verbosity (may be used multiple times)')
             p.add_argument('--color', action='store_true', help=f'use color in output (overrides {cls.ENV_COLOR} environment variable)')
 
-        p_sub = p.add_subparsers(dest='command')
+        subparsers = {None: p.add_subparsers(dest='command')}
 
         for M in Manager.all_managers():
-            M.add_cmdline_parser(p_sub)
+            parts = M.name.rsplit('.', maxsplit=1)
+
+            if len(parts) == 1:
+                prefix = None
+            else:
+                prefix = parts[0]
+
+            subparser = M.add_cmdline_parser(subparsers[prefix],
+                                             level=M.name.count('.') + 1)
+            subparsers[M.name] = subparser
 
         return p
 
