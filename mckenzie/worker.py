@@ -145,16 +145,20 @@ class Worker(Instance):
 
         # Futures currently executing.
         self.fut_executing = set()
-        # PIDs currently executing (mapping to task names). This is modified
+        # PIDs currently executing (mapping from task IDs). This is modified
         # from inside the ThreadPoolExecutor, so self.lock must be acquired for
         # every access.
         self.running_pids = {}
         # Memory usage for tasks that are over their limit.
         self.overmemory_mb = {}
 
-        # Mapping of futures to task IDs and names.
+        # Mapping of futures to task names.
         self.fut_task = {}
 
+        # Task names.
+        self.task_names = {}
+        # Task IDs.
+        self.task_ids = {}
         # Times at which tasks start running.
         self.task_starts = {}
         # Expected maximum memory usage of running tasks.
@@ -264,6 +268,7 @@ class Worker(Instance):
         return task_id, task_name, task_mem_mb
 
     def _execute_task(self, task_name):
+        task_id = self.task_ids[task_name]
         args = [self.conf.worker_execute_cmd, task_name]
 
         for _ in range(self.NUM_EXECUTE_RETRIES):
@@ -281,22 +286,22 @@ class Worker(Instance):
             return False, False, '', 0
 
         with self.lock:
-            # We're assuming PID reuse is not a problem.
-            self.running_pids[p.pid] = task_name
+            self.running_pids[task_id] = p.pid
 
         # Block until the process is done.
         wait_pid, wait_return, wait_usage = os.wait4(p.pid, 0)
 
         with self.lock:
-            self.running_pids.pop(p.pid)
+            self.running_pids.pop(task_id)
 
         success = wait_pid == p.pid and wait_return == 0
 
         # The units of ru_maxrss should be KB.
         return True, success, p.stdout.read(), int(wait_usage.ru_maxrss)
 
-    def _handle_completed_task(self, task_id, task_name, task_ran, success,
-                               output, max_mem_kb):
+    def _handle_completed_task(self, task_name, task_ran, success, output,
+                               max_mem_kb):
+        task_id = self.task_ids[task_name]
         max_mem_mb = max_mem_kb / 1024
 
         if success:
@@ -380,6 +385,8 @@ class Worker(Instance):
             # We're completely done with the task, so let it go.
             TaskManager._unclaim(tx, task_id)
 
+        self.task_names.pop(task_id)
+        self.task_ids.pop(task_name)
         self.task_starts.pop(task_name)
         self.task_mems_mb.pop(task_name)
 
@@ -411,7 +418,8 @@ class Worker(Instance):
             with self.lock:
                 pids = self.running_pids.copy()
 
-            for pid, task_name in pids.items():
+            for task_id, pid in pids.items():
+                task_name = self.task_names[task_id]
                 rss_mb = mem_rss_mb(pid, log=logger.warning)
                 limit_mb = self.task_mems_mb[task_name]
 
@@ -470,6 +478,8 @@ class Worker(Instance):
 
                 task_id, task_name, task_mem_mb = task
 
+                self.task_names[task_id] = task_name
+                self.task_ids[task_name] = task_id
                 self.task_starts[task_name] = datetime.now()
                 self.task_mems_mb[task_name] = task_mem_mb
 
@@ -477,7 +487,7 @@ class Worker(Instance):
                 fut = pool.submit(self._execute_task, task_name)
 
                 self.fut_executing.add(fut)
-                self.fut_task[fut] = task_id, task_name
+                self.fut_task[fut] = task_name
 
             # Update the status.
             @self.db.tx
@@ -498,9 +508,8 @@ class Worker(Instance):
                 fut_done, self.fut_executing = r
 
                 for fut in fut_done:
-                    task_id, task_name = self.fut_task.pop(fut)
-                    self._handle_completed_task(task_id, task_name,
-                                                *fut.result())
+                    task_name = self.fut_task.pop(fut)
+                    self._handle_completed_task(task_name, *fut.result())
             elif self.quitting:
                 self.done = True
             else:
@@ -535,7 +544,8 @@ class Worker(Instance):
                 with self.lock:
                     to_kill = self.running_pids.copy()
 
-                for pid, task_name in to_kill.items():
+                for task_id, pid in to_kill.items():
+                    task_name = self.task_names[task_id]
                     logger.info(f'Killing task "{task_name}" ({pid}).')
 
                     try:
@@ -554,7 +564,8 @@ class Worker(Instance):
                 # currently in the KillWait window, so we'll receive a SIGKILL
                 # very soon and need to run this loop as quickly as possible.
                 for fut in fut_done:
-                    task_id, task_name = self.fut_task.pop(fut)
+                    task_name = self.fut_task.pop(fut)
+                    task_id = self.task_ids[task_name]
 
                     logger.debug(f'Task "{task_name}" was aborted.')
 
