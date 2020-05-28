@@ -18,6 +18,7 @@ VALUES
 	({{{V WorkerState.ws_queued}}}, {{{V WorkerState.ws_running}}}),
 	({{{V WorkerState.ws_running}}}, {{{V WorkerState.ws_failed}}}),
 	({{{V WorkerState.ws_running}}}, {{{V WorkerState.ws_quitting}}}),
+	({{{V WorkerState.ws_quitting}}}, {{{V WorkerState.ws_running}}}),
 	({{{V WorkerState.ws_quitting}}}, {{{V WorkerState.ws_failed}}}),
 	({{{V WorkerState.ws_quitting}}}, {{{V WorkerState.ws_done}}}),
 	({{{V WorkerState.ws_failed}}}, {{{V WorkerState.ws_done}}})

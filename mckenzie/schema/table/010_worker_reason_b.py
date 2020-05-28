@@ -6,6 +6,7 @@ descriptions = {
     WorkerReason.wr_worker_quit_cancelled: 'Cancelled by "worker quit".',
     WorkerReason.wr_start: 'Started running.',
     WorkerReason.wr_quit: 'Started quitting.',
+    WorkerReason.wr_unquit: 'Resumed running.',
     WorkerReason.wr_success: 'Exited normally.',
     WorkerReason.wr_success_idle: 'Ran out of tasks.',
     WorkerReason.wr_success_abort: 'Aborted.',

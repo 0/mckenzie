@@ -24,9 +24,9 @@ logger = logging.getLogger(__name__)
 
 # Worker state flow:
 #
-#   cancelled
-#       ^
-#       |
+#   cancelled      +<---------+
+#       ^          |          ^
+#       |          v          |
 # --> queued -> running -> quitting -> done
 #       |          |          |         ^
 #       v          v          v         |
@@ -68,19 +68,21 @@ class WorkerReason(DatabaseEnum):
     wr_worker_quit_cancelled = 2
     wr_start = 3
     wr_quit = 4
-    wr_success = 5
-    wr_success_idle = 6
-    wr_success_abort = 7
-    wr_failure = 8
-    wr_worker_ack_failed = 9
-    wr_worker_clean_queued = 10
-    wr_worker_clean_running = 11
+    wr_unquit = 5
+    wr_success = 6
+    wr_success_idle = 7
+    wr_success_abort = 8
+    wr_failure = 9
+    wr_worker_ack_failed = 10
+    wr_worker_clean_queued = 11
+    wr_worker_clean_running = 12
 
 
 @unique
 class WorkerMessage(IntEnum):
     wm_quit = 1
     wm_abort = 2
+    wm_unquit = 3
 
     def user(s):
         # Drop "wm_" prefix.
@@ -116,6 +118,7 @@ class Worker(Instance):
         self.MESSAGE_HANDLERS = {
             WorkerMessage.wm_quit: self.quit,
             WorkerMessage.wm_abort: self.abort,
+            WorkerMessage.wm_unquit: self.unquit,
         }
 
         self.slurm_job_id = slurm_job_id
@@ -191,6 +194,27 @@ class Worker(Instance):
 
         self.done = True
         self.done_due_to_abort = True
+
+    def unquit(self):
+        if not self.quitting:
+            return
+
+        if self.done_due_to_abort:
+            # Can't unquit if aborting.
+            return
+
+        logger.info('Unquitting.')
+
+        self.quitting = False
+        self.done_due_to_idle = False
+
+        @self.db.tx
+        def F(tx):
+            tx.execute('''
+                    INSERT INTO worker_history (worker_id, state_id, reason_id)
+                    VALUES (%s, %s, %s)
+                    ''', (self.slurm_job_id, WorkerState.ws_running,
+                          WorkerReason.wr_unquit))
 
     def _choose_task(self, task_name_pattern):
         query_args = (TaskState.ts_ready, self.remaining_time,
@@ -1474,6 +1498,39 @@ class WorkerManager(Manager, name='worker'):
 
             logger.debug(f'Releasing worker job {slurm_job_id}.')
             slurm.release_job(slurm_job_id, log=logger.error)
+
+    @description('request worker job to resume running')
+    @argument('--all', action='store_true', help='request all worker jobs')
+    @argument('slurm_job_id', nargs='*', type=int, help='Slurm job ID of worker')
+    def unquit(self, args):
+        all_workers = args.all
+        slurm_job_ids = set(args.slurm_job_id)
+
+        if all_workers:
+            @self.db.tx
+            def workers(tx):
+                # All quitting workers.
+                return tx.execute('''
+                        SELECT w.id
+                        FROM worker w
+                        WHERE state_id = %s
+                        ''', (WorkerState.ws_quitting,))
+
+            for slurm_job_id, in workers:
+                slurm_job_ids.add(slurm_job_id)
+
+        for slurm_job_id in slurm_job_ids:
+            if self.mck.interrupted:
+                break
+
+            logger.info(slurm_job_id)
+
+            @self.db.tx
+            def F(tx):
+                tx.execute('''
+                        INSERT INTO worker_message (worker_id, type_id, args)
+                        VALUES (%s, %s, %s)
+                        ''', (slurm_job_id, WorkerMessage.wm_unquit, {}))
 
 
 @argparsable('worker debugging')
