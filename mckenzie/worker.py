@@ -83,6 +83,7 @@ class WorkerMessage(IntEnum):
     wm_quit = 1
     wm_abort = 2
     wm_unquit = 3
+    wm_scrap_task = 4
 
     def user(s):
         # Drop "wm_" prefix.
@@ -119,6 +120,7 @@ class Worker(Instance):
             WorkerMessage.wm_quit: self.quit,
             WorkerMessage.wm_abort: self.abort,
             WorkerMessage.wm_unquit: self.unquit,
+            WorkerMessage.wm_scrap_task: self.scrap_task,
         }
 
         self.slurm_job_id = slurm_job_id
@@ -151,6 +153,8 @@ class Worker(Instance):
         self.running_pids = {}
         # Memory usage for tasks that are over their limit.
         self.overmemory_mb = {}
+        # Target states for tasks that have been scrapped.
+        self.scrapped_tasks = {}
 
         # Mapping of futures to task names.
         self.fut_task = {}
@@ -219,6 +223,23 @@ class Worker(Instance):
                     VALUES (%s, %s, %s)
                     ''', (self.slurm_job_id, WorkerState.ws_running,
                           WorkerReason.wr_unquit))
+
+    def scrap_task(self, task_id, state_id):
+        with self.lock:
+            try:
+                pid = self.running_pids[task_id]
+            except KeyError:
+                return
+
+        task_name = self.task_names[task_id]
+        logger.info(f'Scrapping task "{task_name}" ({pid}).')
+
+        self.scrapped_tasks[task_name] = state_id
+
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
     def _choose_task(self, task_name_pattern):
         query_args = (TaskState.ts_ready, self.remaining_time,
@@ -323,6 +344,8 @@ class Worker(Instance):
             reason_id = TaskReason.tr_failure_run
         elif task_name in self.overmemory_mb:
             reason_id = TaskReason.tr_failure_memory
+        elif task_name in self.scrapped_tasks:
+            reason_id = TaskReason.tr_failure_scrapped
         else:
             reason_id = TaskReason.tr_failure_exit_code
 
@@ -339,6 +362,8 @@ class Worker(Instance):
         @self.db.tx
         def F(tx):
             limit_retry = False
+            scrapped_reset = False
+            scrapped_state = None
 
             # Extend the task memory limit if it was underestimated, even if
             # the task finished successfully, because it might get rerun later.
@@ -356,6 +381,15 @@ class Worker(Instance):
                 if not success:
                     limit_retry = True
 
+            if task_name in self.scrapped_tasks:
+                target_state = self.scrapped_tasks.pop(task_name)
+
+                if not success and target_state != TaskState.ts_failed:
+                    scrapped_reset = True
+
+                    if target_state != TaskState.ts_waiting:
+                        scrapped_state = target_state
+
             tx.execute('''
                     UPDATE task
                     SET elapsed_time = %s,
@@ -367,14 +401,32 @@ class Worker(Instance):
                     INSERT INTO task_history (task_id, state_id, reason_id,
                                               worker_id)
                     VALUES (%s, %s, %s, %s)
-                    ''', (task_id, state_id, reason_id,
-                          self.slurm_job_id))
+                    ''', (task_id, state_id, reason_id, self.slurm_job_id))
 
-            if (limit_retry
-                    and TaskManager._clean(self.conf, task_name)):
+            if scrapped_reset and TaskManager._clean(self.conf, task_name):
+                # The task is being scrapped, and the user has requested that
+                # we reset it.
+                tx.execute('''
+                        INSERT INTO task_history (task_id, state_id, reason_id,
+                                                  worker_id)
+                        VALUES (%s, %s, %s, %s)
+                        ''', (task_id, TaskState.ts_waiting,
+                              TaskReason.tr_scrapped_reset, self.slurm_job_id))
+
+                if scrapped_state is not None:
+                    # Additionally, the user wants the task moved to a certain
+                    # state.
+                    tx.execute('''
+                            INSERT INTO task_history (task_id, state_id,
+                                                      reason_id, worker_id)
+                            VALUES (%s, %s, %s, %s)
+                            ''', (task_id, scrapped_state,
+                                  TaskReason.tr_scrapped_moved,
+                                  self.slurm_job_id))
+            elif limit_retry and TaskManager._clean(self.conf, task_name):
                 # The task was unsuccessful and its memory limit was
-                # underestimated. We've increased the limit, and will retry the
-                # task automatically as long as we can clean it.
+                # underestimated, but we've increased the limit, and will retry
+                # the task automatically.
                 tx.execute('''
                         INSERT INTO task_history (task_id, state_id, reason_id,
                                                   worker_id)
@@ -1289,6 +1341,73 @@ class WorkerManager(Manager, name='worker'):
                                                     reason_id)
                         VALUES (%s, %s, %s)
                         ''', (slurm_job_id, state_id, reason_id))
+
+    @description('scrap running tasks')
+    @argument('--state', metavar='S', help='target task state (default: failed)')
+    @argument('name', nargs='*', help='task name')
+    def scrap_task(self, args):
+        task_state_name = args.state
+        task_names = args.name
+
+        if task_state_name is None:
+            task_state_id = TaskState.ts_failed
+        else:
+            task_state_id = TaskManager._parse_state(task_state_name)
+
+            if task_state_id not in [TaskState.ts_failed,
+                                     TaskState.ts_waiting]:
+                @self.db.tx
+                def allowed_states(tx):
+                    return tx.execute('''
+                            SELECT to_state_id
+                            FROM task_state_transition
+                            WHERE from_state_id = %s
+                            AND free_transition
+                            ''', (TaskState.ts_waiting,))
+
+                for candidate_state_id, in allowed_states:
+                    if task_state_id == candidate_state_id:
+                        break
+                else:
+                    logger.error(f'Cannot set state to "{task_state_name}".')
+
+                    raise HandledException()
+
+        for task_name in task_names:
+            if self.mck.interrupted:
+                break
+
+            @self.db.tx
+            def info(tx):
+                return tx.execute('''
+                        SELECT t.id, wt.worker_id
+                        FROM task t
+                        LEFT JOIN worker_task wt ON (wt.task_id = t.id
+                                                     AND wt.active)
+                        WHERE t.name = %s
+                        ''', (task_name,))
+
+            if len(info) == 0:
+                logger.error(f'Task "{task_name}" does not exist.')
+
+                continue
+
+            task_id, worker_id = info[0]
+
+            if worker_id is None:
+                logger.error(f'Task "{task_name}" is not running.')
+
+                continue
+
+            logger.info(task_name)
+
+            @self.db.tx
+            def F(tx):
+                tx.execute('''
+                        INSERT INTO worker_message (worker_id, type_id, args)
+                        VALUES (%s, %s, %s)
+                        ''', (worker_id, WorkerMessage.wm_scrap_task,
+                              {'task_id': task_id, 'state_id': task_state_id}))
 
     @description('show worker details')
     @argument('--inactive-tasks', action='store_true', help='include inactive tasks')

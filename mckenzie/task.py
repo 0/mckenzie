@@ -88,19 +88,22 @@ class TaskReason(DatabaseEnum):
     tr_failure_worker_clean = 12
     tr_failure_run = 13
     tr_failure_memory = 14
-    tr_limit_retry = 15
-    tr_task_reset_failed = 16
-    tr_success = 17
-    tr_task_synthesize = 18
-    tr_task_cleanablize = 19
-    tr_task_uncleanablize = 20
-    tr_task_clean_cleaning = 21
-    tr_task_clean_cleaned = 22
-    tr_task_rerun_synthesize = 23
-    tr_task_rerun_cleanablize = 24
-    tr_task_rerun_cleaning = 25
-    tr_task_rerun_cleaned = 26
-    tr_task_rerun_reset = 27
+    tr_failure_scrapped = 15
+    tr_limit_retry = 16
+    tr_scrapped_reset = 17
+    tr_scrapped_moved = 18
+    tr_task_reset_failed = 19
+    tr_success = 20
+    tr_task_synthesize = 21
+    tr_task_cleanablize = 22
+    tr_task_uncleanablize = 23
+    tr_task_clean_cleaning = 24
+    tr_task_clean_cleaned = 25
+    tr_task_rerun_synthesize = 26
+    tr_task_rerun_cleanablize = 27
+    tr_task_rerun_cleaning = 28
+    tr_task_rerun_cleaned = 29
+    tr_task_rerun_reset = 30
 
 
 class TaskClaimError(Exception):
