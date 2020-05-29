@@ -629,6 +629,18 @@ class WorkerManager(Manager, name='worker'):
     STATE_ORDER = ['cancelled', 'queued', 'running', 'running (?)', 'quitting',
                    'quitting (?)', 'failed', 'done']
 
+    @staticmethod
+    def _parse_state(state_name):
+        if state_name is None:
+            return None
+
+        try:
+            return WorkerState[WorkerState.unuser(state_name)]
+        except KeyError:
+            logger.error(f'Invalid state "{state_name}".')
+
+            raise HandledException()
+
     def _format_state(self, state_id, job_running, timeout):
         state = WorkerState(state_id).name
         state_user = WorkerState.user(state)
@@ -647,17 +659,6 @@ class WorkerManager(Manager, name='worker'):
             color = self.c('error')
 
         return state, state_user, color
-
-    def _parse_state(self, state_name):
-        if state_name is None:
-            return None
-
-        try:
-            return WorkerState[WorkerState.unuser(state_name)]
-        except KeyError:
-            logger.error(f'Invalid state "{state_name}".')
-
-            raise HandledException()
 
     def _worker_output_file(self, slurm_job_id=None, *, absolute=False):
         if slurm_job_id is None:
@@ -1546,7 +1547,8 @@ class WorkerManager(Manager, name='worker'):
 
 @argparsable('worker debugging')
 class WorkerDebugManager(Manager, name='worker.debug'):
-    def _parse_message_type(self, message_type_name):
+    @staticmethod
+    def _parse_message_type(message_type_name):
         if message_type_name is None:
             return None
 

@@ -194,6 +194,18 @@ class TaskManager(Manager, name='task'):
 
         return check_proc(proc, log=logger.error)
 
+    @staticmethod
+    def _parse_state(state_name):
+        if state_name is None:
+            return None
+
+        try:
+            return TaskState[TaskState.unuser(state_name)]
+        except KeyError:
+            logger.error(f'Invalid state "{state_name}".')
+
+            raise HandledException()
+
     @classmethod
     def _clean(cls, conf, task_name):
         return cls._run_cmd(conf.general_work_path, conf.task_clean_cmd,
@@ -230,17 +242,6 @@ class TaskManager(Manager, name='task'):
             color = self.c('warning')
 
         return state, state_user, color
-
-    def _parse_state(self, state_name):
-        if state_name is None:
-            return None
-
-        try:
-            return TaskState[TaskState.unuser(state_name)]
-        except KeyError:
-            logger.error(f'Invalid state "{state_name}".')
-
-            raise HandledException()
 
     def _simple_state_change(self, from_state_id, to_state_id, reason_id,
                              name_pattern, names, *, count_limit=None,
