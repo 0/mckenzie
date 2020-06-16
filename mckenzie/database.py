@@ -678,7 +678,7 @@ class DatabaseManager(Manager, name='database'):
                 tx.dry_run()
 
             if self.db.dbschema is not None:
-                tx.execute(f'CREATE SCHEMA IF NOT EXISTS {self.db.dbschema}')
+                tx.execute(f'CREATE SCHEMA IF NOT EXISTS {self.db.dbschema};')
 
             paths = []
 

@@ -37,5 +37,5 @@ descriptions = {
 for reason in sorted(TaskReason):
     tx.execute('''
         INSERT INTO task_reason (id, name, description)
-        VALUES (%s, %s, %s)
+        VALUES (%s, %s, %s);
         ''', (reason.value, reason.name, descriptions[reason]))
