@@ -1681,6 +1681,69 @@ class WorkerDebugManager(Manager, name='worker.debug'):
     def summary(self, args):
         logger.info('No action specified.')
 
+    @description('list worker messages')
+    @argument('--type', metavar='T', help='type of message')
+    @argument('--read', action='store_true', help='only read messages')
+    @argument('--unread', action='store_true', help='only unread messages')
+    @argument('--done', action='store_true', help='include done workers')
+    @argument('slurm_job_id', nargs='*', type=int, help='Slurm job ID of worker')
+    def list_messages(self, args):
+        message_type_id = self._parse_message_type(args.type)
+        only_read = args.read
+        only_unread = args.unread
+        done = args.done
+        slurm_job_ids = args.slurm_job_id
+
+        @self.db.tx
+        def messages(tx):
+            query = '''
+                    SELECT wm.worker_id, wm.time, wm.type_id, wm.args,
+                           wm.read_at
+                    FROM worker_message wm
+                    JOIN worker w ON w.id = wm.worker_id
+                    WHERE TRUE
+                    '''
+            query_args = ()
+
+            if message_type_id is not None:
+                query += ' AND wm.type_id = %s'
+                query_args += (message_type_id,)
+
+            if only_read:
+                # Arbitrarily, --read takes precedence over --unread.
+                query += ' AND wm.read_at IS NOT NULL'
+            elif only_unread:
+                query += ' AND wm.read_at IS NULL'
+
+            if slurm_job_ids:
+                query += ' AND wm.worker_id = ANY (%s)'
+                query_args += (slurm_job_ids,)
+            elif not done:
+                query += ' AND w.state_id != %s'
+                query_args += (WorkerState.ws_done,)
+
+            query += ' ORDER BY wm.time, wm.id'
+
+            return tx.execute(query, query_args)
+
+        message_data = []
+
+        for (slurm_job_id, time, message_type_id, message_args,
+                read_at) in messages:
+            message_type = WorkerMessage(message_type_id).name
+            message_type_user = WorkerMessage.user(message_type)
+
+            if read_at is not None:
+                read_after = read_at - time
+            else:
+                read_after = '-'
+
+            message_data.append([str(slurm_job_id), time, message_type_user,
+                                 message_args, read_after])
+
+        self.print_table(['Worker', 'Sent at', 'Type', 'Args', 'Read after'],
+                         message_data)
+
     @description('send a message to workers')
     @argument('--type', metavar='T', required=True, help='type of message')
     @argument('--args', metavar='A', required=True, help='message args as a JSON string')
