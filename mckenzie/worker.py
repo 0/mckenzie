@@ -1303,7 +1303,7 @@ class WorkerManager(Manager, name='worker'):
 
         logger.info(f'Starting worker {slurm_job_id}.')
         worker = Worker(slurm_job_id, worker_cpus, worker_mem_mb,
-                        time_end_projected, self)
+                        time_end_projected, self.mck)
 
         signal.signal(signal.SIGTERM, worker.abort)
 
