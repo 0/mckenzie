@@ -78,6 +78,12 @@ class Transaction:
     def __init__(self, curs):
         self.curs = curs
 
+        self._rowcount = None
+
+    @property
+    def rowcount(self):
+        return self._rowcount
+
     def _execute(self, f, *args, **kwargs):
         logger.debug('Executing query.')
 
@@ -95,6 +101,8 @@ class Transaction:
                 raise ForeignKeyViolation(e.diag.constraint_name)
             else:
                 raise
+
+        self._rowcount = self.curs.rowcount
 
         try:
             return self.curs.fetchall()
