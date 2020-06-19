@@ -133,6 +133,8 @@ class Worker(Instance):
 
         self.lock = threading.Lock()
 
+        self._pool = None
+
         # All the tasks have finished (or will be killed) and worker can exit.
         self.done = False
         # Worker will be done when all the running tasks have finished.
@@ -170,6 +172,8 @@ class Worker(Instance):
 
         # If there's a lack of tasks, when it began.
         self.idle_start = None
+        # Only output the warning once.
+        self.rss_fail_warn = False
 
     @property
     def remaining_time(self):
@@ -275,8 +279,9 @@ class Worker(Instance):
         if len(task) == 0:
             return None
 
-        task_id, task_name, task_mem_mb = task[0]
+        return task[0]
 
+    def _start_task(self, task_id, task_name, task_mem_mb):
         @self.db.tx
         def F(tx):
             tx.execute('''
@@ -286,7 +291,19 @@ class Worker(Instance):
                     ''', (task_id, TaskState.ts_running, TaskReason.tr_running,
                           self.slurm_job_id))
 
-        return task_id, task_name, task_mem_mb
+        # Reset the idle timer.
+        self.idle_start = None
+
+        self.task_names[task_id] = task_name
+        self.task_ids[task_name] = task_id
+        self.task_starts[task_name] = datetime.now()
+        self.task_mems_mb[task_name] = task_mem_mb
+
+        logger.debug(f'Submitting task "{task_name}" to the pool.')
+        fut = self._pool.submit(self._execute_task, task_name)
+
+        self.fut_executing.add(fut)
+        self.fut_task[fut] = task_name
 
     def _execute_task(self, task_name):
         task_id = self.task_ids[task_name]
@@ -442,155 +459,140 @@ class Worker(Instance):
         self.task_starts.pop(task_name)
         self.task_mems_mb.pop(task_name)
 
-    def _run(self, pool):
-        # Only output the warning once.
-        rss_fail_warn = False
+    def _run(self):
+        # Check messages.
+        @self.db.tx
+        def new_messages(tx):
+            return tx.execute('''
+                    UPDATE worker_message
+                    SET read_at = NOW()
+                    WHERE worker_id = %s
+                    AND read_at IS NULL
+                    RETURNING type_id, args
+                    ''', (self.slurm_job_id,))
 
-        while not self.done:
-            # Check messages.
-            @self.db.tx
-            def new_messages(tx):
-                return tx.execute('''
-                        UPDATE worker_message
-                        SET read_at = NOW()
-                        WHERE worker_id = %s
-                        AND read_at IS NULL
-                        RETURNING type_id, args
-                        ''', (self.slurm_job_id,))
+        for message_type_id, args in new_messages:
+            self.MESSAGE_HANDLERS[message_type_id](**args)
 
-            for message_type_id, args in new_messages:
-                self.MESSAGE_HANDLERS[message_type_id](**args)
+        if self.remaining_time.total_seconds() < self.GIVE_UP_SECONDS:
+            # Too little time remaining in job, so we will not take on any
+            # more tasks.
+            self.quit()
 
-            if self.remaining_time.total_seconds() < self.GIVE_UP_SECONDS:
-                # Too little time remaining in job, so we will not take on any
-                # more tasks.
-                self.quit()
+        # Check memory usage.
+        with self.lock:
+            pids = self.running_pids.copy()
 
-            # Check memory usage.
-            with self.lock:
-                pids = self.running_pids.copy()
+        for task_id, pid in pids.items():
+            task_name = self.task_names[task_id]
+            rss_mb = mem_rss_mb(pid, log=logger.warning)
+            limit_mb = self.task_mems_mb[task_name]
 
-            for task_id, pid in pids.items():
-                task_name = self.task_names[task_id]
-                rss_mb = mem_rss_mb(pid, log=logger.warning)
-                limit_mb = self.task_mems_mb[task_name]
+            if rss_mb is None:
+                if not self.rss_fail_warn:
+                    self.rss_fail_warn = True
+                    logger.warning('Failed to get memory usage for task '
+                                   f'"{task_name}" ({pid}).')
+            elif rss_mb > limit_mb:
+                if self.remaining_mem_mb <= rss_mb - limit_mb:
+                    logger.info(f'Killing task "{task_name}" ({pid}) for '
+                                'using too much memory '
+                                f'({rss_mb} MB > {limit_mb} MB).')
 
-                if rss_mb is None:
-                    if not rss_fail_warn:
-                        rss_fail_warn = True
-                        logger.warning('Failed to get memory usage for task '
-                                       f'"{task_name}" ({pid}).')
-                elif rss_mb > limit_mb:
-                    if self.remaining_mem_mb <= rss_mb - limit_mb:
-                        logger.info(f'Killing task "{task_name}" ({pid}) for '
-                                    'using too much memory '
-                                    f'({rss_mb} MB > {limit_mb} MB).')
+                    self.overmemory_mb[task_name] = rss_mb
 
-                        self.overmemory_mb[task_name] = rss_mb
-
-                        try:
-                            os.killpg(pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                    else:
-                        logger.info('Extending memory limit for task '
-                                    f'"{task_name}" from {limit_mb} MB to '
-                                    f'{rss_mb} MB.')
-
-                        self.task_mems_mb[task_name] = rss_mb
-
-                        @self.db.tx
-                        def F(tx):
-                            tx.execute('''
-                                    UPDATE task
-                                    SET mem_limit_mb = %s
-                                    WHERE name = %s
-                                    AND mem_limit_mb < %s
-                                    ''', (rss_mb, task_name, rss_mb))
-
-            # Get current pattern.
-            @self.db.tx
-            def task_name_pattern(tx):
-                return tx.execute('''
-                        SELECT task_name_pattern
-                        FROM worker
-                        WHERE id = %s
-                        ''', (self.slurm_job_id,))[0][0]
-
-            # Fill up with tasks.
-            while (not self.quitting
-                    and len(self.fut_executing) < self.worker_cpus):
-                task = self._choose_task(task_name_pattern)
-
-                if task is None:
-                    break
-
-                # Reset the idle timer.
-                self.idle_start = None
-
-                task_id, task_name, task_mem_mb = task
-
-                self.task_names[task_id] = task_name
-                self.task_ids[task_name] = task_id
-                self.task_starts[task_name] = datetime.now()
-                self.task_mems_mb[task_name] = task_mem_mb
-
-                logger.debug(f'Submitting task "{task_name}" to the pool.')
-                fut = pool.submit(self._execute_task, task_name)
-
-                self.fut_executing.add(fut)
-                self.fut_task[fut] = task_name
-
-            # Update the status.
-            @self.db.tx
-            def F(tx):
-                tx.execute('''
-                        UPDATE worker
-                        SET heartbeat = NOW(),
-                            cur_mem_usage_mb = %s
-                        WHERE id = %s
-                        ''', (sum(self.task_mems_mb.values()),
-                              self.slurm_job_id))
-
-            if self.fut_executing:
-                # Wait for running tasks.
-                r = futures.wait(self.fut_executing,
-                                 timeout=self.TASK_WAIT_SECONDS,
-                                 return_when=futures.FIRST_COMPLETED)
-                fut_done, self.fut_executing = r
-
-                for fut in fut_done:
-                    task_name = self.fut_task.pop(fut)
-                    self._handle_completed_task(task_name, *fut.result())
-            elif self.quitting:
-                self.done = True
-            else:
-                if self.idle_start is None:
-                    # Start the idle timer.
-                    self.idle_start = datetime.now()
-
-                idle_sec = (datetime.now() - self.idle_start).total_seconds()
-
-                if idle_sec > self.IDLE_MAX_SECONDS:
-                    self.quit()
-                    self.done = True
-                    self.done_due_to_idle = True
+                    try:
+                        os.killpg(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
                 else:
-                    # Take a break.
-                    sleep(self.TASK_WAIT_SECONDS)
+                    logger.info('Extending memory limit for task '
+                                f'"{task_name}" from {limit_mb} MB to '
+                                f'{rss_mb} MB.')
+
+                    self.task_mems_mb[task_name] = rss_mb
+
+                    @self.db.tx
+                    def F(tx):
+                        tx.execute('''
+                                UPDATE task
+                                SET mem_limit_mb = %s
+                                WHERE name = %s
+                                AND mem_limit_mb < %s
+                                ''', (rss_mb, task_name, rss_mb))
+
+        # Get current pattern.
+        @self.db.tx
+        def task_name_pattern(tx):
+            return tx.execute('''
+                    SELECT task_name_pattern
+                    FROM worker
+                    WHERE id = %s
+                    ''', (self.slurm_job_id,))[0][0]
+
+        # Fill up with tasks.
+        while (not self.quitting
+                and len(self.fut_executing) < self.worker_cpus):
+            task = self._choose_task(task_name_pattern)
+
+            if task is None:
+                break
+
+            self._start_task(*task)
+
+        # Update the status.
+        @self.db.tx
+        def F(tx):
+            tx.execute('''
+                    UPDATE worker
+                    SET heartbeat = NOW(),
+                        cur_mem_usage_mb = %s
+                    WHERE id = %s
+                    ''', (sum(self.task_mems_mb.values()),
+                          self.slurm_job_id))
+
+        if self.fut_executing:
+            # Wait for running tasks.
+            r = futures.wait(self.fut_executing,
+                             timeout=self.TASK_WAIT_SECONDS,
+                             return_when=futures.FIRST_COMPLETED)
+            fut_done, self.fut_executing = r
+
+            for fut in fut_done:
+                task_name = self.fut_task.pop(fut)
+                self._handle_completed_task(task_name, *fut.result())
+        elif self.quitting:
+            self.done = True
+        else:
+            if self.idle_start is None:
+                # Start the idle timer.
+                self.idle_start = datetime.now()
+
+            idle_sec = (datetime.now() - self.idle_start).total_seconds()
+
+            if idle_sec > self.IDLE_MAX_SECONDS:
+                self.quit()
+                self.done = True
+                self.done_due_to_idle = True
+            else:
+                # Take a break.
+                sleep(self.TASK_WAIT_SECONDS)
 
     def run(self):
         with futures.ThreadPoolExecutor(max_workers=self.worker_cpus) as pool:
             logger.debug('Diving into pool.')
+            self._pool = pool
 
             try:
-                self._run(pool)
+                while not self.done:
+                    self._run()
             except:
                 logger.error('Aborting due to unhandled exception.')
 
                 raise
             finally:
                 logger.debug('Leaving pool.')
+                self._pool = None
 
                 # Kill any remaining processes.
                 with self.lock:
