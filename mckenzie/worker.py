@@ -116,11 +116,13 @@ class Worker(Instance):
                  time_end_projected, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+        # These handlers are called inside a transaction, and therefore must be
+        # idempotent with respect to nontrivial side-effects.
         self.MESSAGE_HANDLERS = {
-            WorkerMessage.wm_quit: self.quit,
-            WorkerMessage.wm_abort: self.abort,
-            WorkerMessage.wm_unquit: self.unquit,
-            WorkerMessage.wm_scrap_task: self.scrap_task,
+            WorkerMessage.wm_quit: self.hdl_quit,
+            WorkerMessage.wm_abort: self.hdl_abort,
+            WorkerMessage.wm_unquit: self.hdl_unquit,
+            WorkerMessage.wm_scrap_task: self.hdl_scrap_task,
         }
 
         self.slurm_job_id = slurm_job_id
@@ -183,7 +185,7 @@ class Worker(Instance):
     def remaining_mem_mb(self):
         return self.worker_mem_mb - sum(self.task_mems_mb.values())
 
-    def quit(self):
+    def hdl_quit(self, *, tx):
         if self.quitting:
             return
 
@@ -191,23 +193,31 @@ class Worker(Instance):
 
         self.quitting = True
 
+        tx.execute('''
+                INSERT INTO worker_history (worker_id, state_id, reason_id)
+                VALUES (%s, %s, %s)
+                ''', (self.slurm_job_id, WorkerState.ws_quitting,
+                      WorkerReason.wr_quit))
+
+    def quit(self):
         @self.db.tx
         def F(tx):
-            tx.execute('''
-                    INSERT INTO worker_history (worker_id, state_id, reason_id)
-                    VALUES (%s, %s, %s)
-                    ''', (self.slurm_job_id, WorkerState.ws_quitting,
-                          WorkerReason.wr_quit))
+            self.hdl_quit(tx=tx)
 
-    def abort(self, signum=None, frame=None):
+    def hdl_abort(self, *, tx):
         logger.info('Aborting.')
 
-        self.quit()
+        self.hdl_quit(tx=tx)
 
         self.done = True
         self.done_due_to_abort = True
 
-    def unquit(self):
+    def abort(self, signum=None, frame=None):
+        @self.db.tx
+        def F(tx):
+            self.hdl_abort(tx=tx)
+
+    def hdl_unquit(self, *, tx):
         if not self.quitting:
             return
 
@@ -220,15 +230,13 @@ class Worker(Instance):
         self.quitting = False
         self.done_due_to_idle = False
 
-        @self.db.tx
-        def F(tx):
-            tx.execute('''
-                    INSERT INTO worker_history (worker_id, state_id, reason_id)
-                    VALUES (%s, %s, %s)
-                    ''', (self.slurm_job_id, WorkerState.ws_running,
-                          WorkerReason.wr_unquit))
+        tx.execute('''
+                INSERT INTO worker_history (worker_id, state_id, reason_id)
+                VALUES (%s, %s, %s)
+                ''', (self.slurm_job_id, WorkerState.ws_running,
+                      WorkerReason.wr_unquit))
 
-    def scrap_task(self, task_id, state_id):
+    def hdl_scrap_task(self, *, tx, task_id, state_id):
         with self.lock:
             try:
                 pid = self.running_pids[task_id]
@@ -461,18 +469,35 @@ class Worker(Instance):
 
     def _run(self):
         # Check messages.
-        @self.db.tx
-        def new_messages(tx):
-            return tx.execute('''
-                    UPDATE worker_message
-                    SET read_at = NOW()
-                    WHERE worker_id = %s
-                    AND read_at IS NULL
-                    RETURNING type_id, args
-                    ''', (self.slurm_job_id,))
+        while True:
+            @self.db.tx
+            def message_found(tx):
+                new_message = tx.execute('''
+                        WITH next_message AS (
+                            SELECT id
+                            FROM worker_message
+                            WHERE worker_id = %s
+                            AND read_at IS NULL
+                            LIMIT 1
+                            FOR UPDATE
+                        )
+                        UPDATE worker_message wm
+                        SET read_at = NOW()
+                        FROM next_message
+                        WHERE wm.id = next_message.id
+                        RETURNING type_id, args
+                        ''', (self.slurm_job_id,))
 
-        for message_type_id, args in new_messages:
-            self.MESSAGE_HANDLERS[message_type_id](**args)
+                if len(new_message) == 0:
+                    return False
+
+                message_type_id, args = new_message[0]
+                self.MESSAGE_HANDLERS[message_type_id](tx=tx, **args)
+
+                return True
+
+            if not message_found:
+                break
 
         if self.remaining_time.total_seconds() < self.GIVE_UP_SECONDS:
             # Too little time remaining in job, so we will not take on any
