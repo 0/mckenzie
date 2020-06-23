@@ -253,7 +253,7 @@ class Worker(Instance):
         except ProcessLookupError:
             pass
 
-    def _choose_task(self, task_name_pattern):
+    def _choose_task(self, task_name_pattern, *, tx):
         query_args = (TaskState.ts_ready, self.remaining_time,
                       self.remaining_mem_mb)
 
@@ -263,41 +263,36 @@ class Worker(Instance):
         else:
             name_clause = ''
 
-        @self.db.tx
-        def task(tx):
-            return tx.execute(f'''
-                    WITH chosen_task AS (
-                        SELECT id, name, mem_limit_mb
-                        FROM task
-                        WHERE state_id = %s
-                        AND claimed_by IS NULL
-                        AND time_limit < %s
-                        AND mem_limit_mb < %s
-                        {name_clause}
-                        ORDER BY priority DESC, mem_limit_mb DESC,
-                                 time_limit DESC
-                        LIMIT 1
-                        FOR UPDATE SKIP LOCKED
-                    )
+        task = tx.execute(f'''
+                WITH chosen_task AS (
                     SELECT id, name, mem_limit_mb
-                    FROM chosen_task
-                    WHERE task_claim(id)
-                    ''', query_args)
+                    FROM task
+                    WHERE state_id = %s
+                    AND claimed_by IS NULL
+                    AND time_limit < %s
+                    AND mem_limit_mb < %s
+                    {name_clause}
+                    ORDER BY priority DESC, mem_limit_mb DESC, time_limit DESC
+                    LIMIT 1
+                    FOR UPDATE SKIP LOCKED
+                )
+                SELECT id, name, mem_limit_mb
+                FROM chosen_task
+                WHERE task_claim(id)
+                ''', query_args)
 
         if len(task) == 0:
             return None
 
         return task[0]
 
-    def _start_task(self, task_id, task_name, task_mem_mb):
-        @self.db.tx
-        def F(tx):
-            tx.execute('''
-                    INSERT INTO task_history (task_id, state_id, reason_id,
-                                              worker_id)
-                    VALUES (%s, %s, %s, %s)
-                    ''', (task_id, TaskState.ts_running, TaskReason.tr_running,
-                          self.slurm_job_id))
+    def _start_task(self, task_id, task_name, task_mem_mb, *, tx):
+        tx.execute('''
+                INSERT INTO task_history (task_id, state_id, reason_id,
+                                          worker_id)
+                VALUES (%s, %s, %s, %s)
+                ''', (task_id, TaskState.ts_running, TaskReason.tr_running,
+                      self.slurm_job_id))
 
         # Reset the idle timer.
         self.idle_start = None
@@ -558,12 +553,19 @@ class Worker(Instance):
         # Fill up with tasks.
         while (not self.quitting
                 and len(self.fut_executing) < self.worker_cpus):
-            task = self._choose_task(task_name_pattern)
+            @self.db.tx
+            def task_chosen(tx):
+                task = self._choose_task(task_name_pattern, tx=tx)
 
-            if task is None:
+                if task is None:
+                    return False
+
+                self._start_task(*task, tx=tx)
+
+                return True
+
+            if not task_chosen:
                 break
-
-            self._start_task(*task)
 
         # Update the status.
         @self.db.tx
