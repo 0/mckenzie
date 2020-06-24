@@ -170,7 +170,7 @@ class TaskManager(Manager, name='task'):
 
     @staticmethod
     def _claim(tx, task_id):
-        success = tx.callproc('task_claim', (task_id))[0][0]
+        success = tx.callproc('task_claim', (task_id,))[0][0]
 
         if not success:
             raise TaskClaimError(task_id)
