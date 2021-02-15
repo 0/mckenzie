@@ -30,7 +30,7 @@ VALUES
 	({{{V TaskState.ts_ready}}}, {{{V TaskState.ts_running}}}, FALSE),
 	-- Task must fail.
 	({{{V TaskState.ts_running}}}, {{{V TaskState.ts_failed}}}, FALSE),
-	-- Task must be cleaned.
+	-- Task must be cleaned and scrubbed.
 	({{{V TaskState.ts_failed}}}, {{{V TaskState.ts_waiting}}}, FALSE),
 	-- Task must succeed.
 	({{{V TaskState.ts_running}}}, {{{V TaskState.ts_done}}}, FALSE),
@@ -42,8 +42,8 @@ VALUES
 	({{{V TaskState.ts_cleanable}}}, {{{V TaskState.ts_cleaning}}}, FALSE),
 	-- Task must be cleaned.
 	({{{V TaskState.ts_cleaning}}}, {{{V TaskState.ts_cleaned}}}, FALSE),
-	-- Task must be unsynthesized. Could result in soft dependencies no longer
-	-- being satisfied.
+	-- Task must be unsynthesized and scrubbed. Could result in soft
+	-- dependencies no longer being satisfied.
 	({{{V TaskState.ts_cleaned}}}, {{{V TaskState.ts_waiting}}}, FALSE)
 ON CONFLICT (from_state_id, to_state_id) DO NOTHING;
 
