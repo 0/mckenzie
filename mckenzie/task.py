@@ -1591,7 +1591,7 @@ class TaskManager(Manager, name='task'):
         task_data = []
 
         for state_id, time, time_next, worker_id, reason in task_history:
-            state_user = TaskState.user(TaskState(state_id).name)
+            state, state_user, state_color = self._format_state(state_id)
             duration = time_next - time
 
             if worker_id is not None:
@@ -1599,7 +1599,8 @@ class TaskManager(Manager, name='task'):
             else:
                 worker_id = ''
 
-            task_data.append([time, duration, state_user, reason, worker_id])
+            task_data.append([time, duration, (state_user, state_color),
+                              reason, worker_id])
 
         if task_data:
             self.print_table(['Time', 'Duration', 'State', 'Reason', 'Worker'],
@@ -1652,10 +1653,10 @@ class TaskManager(Manager, name='task'):
         task_data = []
 
         for dependency_name, soft, state_id in task_dependency:
-            state_user = TaskState.user(TaskState(state_id).name)
+            state, state_user, state_color = self._format_state(state_id)
 
             task_data.append([dependency_name, 'soft' if soft else 'hard',
-                              state_user])
+                              (state_user, state_color)])
 
         if task_data:
             self.print_table(['Dependency', 'Type', 'State'], task_data)
