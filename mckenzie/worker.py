@@ -515,9 +515,9 @@ class Worker(Instance):
                                    f'"{task_name}" ({pid}).')
             elif rss_mb > limit_mb:
                 if self.remaining_mem_mb <= rss_mb - limit_mb:
-                    logger.info(f'Killing task "{task_name}" ({pid}) for '
-                                'using too much memory '
-                                f'({rss_mb} MB > {limit_mb} MB).')
+                    logger.debug(f'Killing task "{task_name}" ({pid}) for '
+                                 'using too much memory '
+                                 f'({rss_mb} MB > {limit_mb} MB).')
 
                     self.overmemory_mb[task_name] = rss_mb
 
@@ -526,9 +526,9 @@ class Worker(Instance):
                     except ProcessLookupError:
                         pass
                 else:
-                    logger.info('Extending memory limit for task '
-                                f'"{task_name}" from {limit_mb} MB to '
-                                f'{rss_mb} MB.')
+                    logger.debug('Extending memory limit for task '
+                                 f'"{task_name}" from {limit_mb} MB to '
+                                 f'{rss_mb} MB.')
 
                     self.task_mems_mb[task_name] = rss_mb
 
