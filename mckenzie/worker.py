@@ -1080,16 +1080,16 @@ class WorkerManager(Manager, name='worker'):
             # Color based on resource usage.
             if state == 'ws_quitting':
                 pass
-            elif (tasks_percent is not None and tasks_percent < 50
+            elif (tasks_percent is not None and tasks_percent < 95
                     and cur_mem_usage_percent is not None
-                    and cur_mem_usage_percent < 50):
+                    and cur_mem_usage_percent < 80):
                 tasks_percent_str = (tasks_percent_str, self.c('error'))
                 cur_mem_usage_percent_str = (cur_mem_usage_percent_str,
                                              self.c('error'))
-            elif tasks_percent is not None and tasks_percent < 50:
+            elif tasks_percent is not None and tasks_percent < 95:
                 tasks_percent_str = (tasks_percent_str, self.c('warning'))
             elif (cur_mem_usage_percent is not None
-                    and cur_mem_usage_percent < 50):
+                    and cur_mem_usage_percent < 80):
                 cur_mem_usage_percent_str = (cur_mem_usage_percent_str,
                                              self.c('warning'))
 
