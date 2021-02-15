@@ -1194,7 +1194,7 @@ class TaskManager(Manager, name='task'):
                 query += ' AND name LIKE %s'
                 query_args += (name_pattern,)
 
-            query += ' ORDER BY id'
+            query += ' ORDER BY priority ASC, id'
 
             return tx.execute(query, query_args)
 
