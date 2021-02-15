@@ -21,16 +21,19 @@ logger = logging.getLogger(__name__)
 
 # Task state flow:
 #
-#    cancelled   cleaned <-------- cleaning
-#       ^  :        |                  ^
-#       :  v        |                  |
-#       held        |              cleanable
-#       ^  :        |                 ^ :
-#       :  v        v                 : v
-# --> waiting <-----+<-- failed   synthesized
-#       ^  |               ^           ^
-#       :  v               |           |
-#      ready ---------> running ---> done
+#     cancelled   cleaned <-------- cleaning
+#        ^  :        |                  ^
+#        :  v        |                  |
+#        held        |              cleanable
+#        ^  :        |                 ^ :
+#        :  v        v                 : v
+# -+-> waiting <-----+<-- failed   synthesized
+#  ^     ^  |               ^           ^
+#  |     :  v               |           |
+#  |    ready ---------> running ---> done
+#  |                                    |
+#  |                                    v
+#  +<-----------------------------------+
 #
 # waiting: The task is waiting for its dependencies to finish before it can
 #          run.
@@ -416,7 +419,7 @@ class TaskManager(Manager, name='task'):
 
                 return tx.execute('''
                         SELECT t.id, t.name, t.state_id, ts.incomplete,
-                               t.elapsed_time, t.max_mem_mb, task_claim(t.id)
+                               task_claim(t.id)
                         FROM task t
                         JOIN task_state ts ON ts.id = t.state_id
                         JOIN task_dependency td ON td.task_id = t.id
@@ -425,7 +428,7 @@ class TaskManager(Manager, name='task'):
 
             any_claim_failed = False
 
-            for task_id, task_name, *_, claim_success in new_tasks:
+            for task_id, *_, claim_success in new_tasks:
                 if claim_success:
                     cs.add(task_id)
                 else:
@@ -437,8 +440,8 @@ class TaskManager(Manager, name='task'):
 
                 raise HandledException()
 
-            for task_id, task_name, *rest, claim_success in new_tasks:
-                state_id, incomplete, *_ = rest
+            for *data, incomplete, claim_success in new_tasks:
+                task_id, *_ = data
 
                 if incomplete:
                     # Tasks that haven't been completed yet don't need to be
@@ -449,7 +452,7 @@ class TaskManager(Manager, name='task'):
                 try:
                     new_node = task_nodes[task_id]
                 except KeyError:
-                    new_node = DAG((task_id, task_name, *rest))
+                    new_node = DAG(data)
                     task_nodes[task_id] = new_node
 
                 cur_node.add(new_node)
@@ -1293,8 +1296,7 @@ class TaskManager(Manager, name='task'):
         @self.db.tx
         def task(tx):
             return tx.execute('''
-                    SELECT t.id, t.state_id, ts.incomplete, t.elapsed_time,
-                           t.max_mem_mb, task_claim(t.id)
+                    SELECT t.id, t.state_id, ts.incomplete, task_claim(t.id)
                     FROM task t
                     JOIN task_state ts ON ts.id = t.state_id
                     WHERE t.name = %s
@@ -1305,8 +1307,7 @@ class TaskManager(Manager, name='task'):
 
             return
 
-        (task_id, state_id, incomplete, elapsed_time, max_mem_mb,
-                claim_success) = task[0]
+        task_id, state_id, incomplete, claim_success = task[0]
 
         if not claim_success:
             logger.error(f'Failed to claim task "{task_name}".')
@@ -1321,8 +1322,7 @@ class TaskManager(Manager, name='task'):
 
                 return
 
-            target_data = (task_id, task_name, state_id, incomplete,
-                           elapsed_time, max_mem_mb)
+            target_data = task_id, task_name, state_id
 
             locked_dependency_keys = []
 
@@ -1340,8 +1340,7 @@ class TaskManager(Manager, name='task'):
                 # Rerun all the tasks that were deemed necessary to rerun. We
                 # need to push each task through all the states that it has to
                 # visit on its way back to waiting.
-                for (task_id, task_name, state_id, incomplete, elapsed_time,
-                        max_mem_mb) in task_list:
+                for task_id, task_name, state_id in task_list:
                     logger.info(task_name)
 
                     state = TaskState(state_id).name
@@ -1356,15 +1355,7 @@ class TaskManager(Manager, name='task'):
                         raise HandledException()
 
                     if state == 'ts_done':
-                        elapsed_time_hours = elapsed_time.total_seconds() / 3600
-                        max_mem_gb = max_mem_mb / 1024
-
-                        logger.debug('Synthesizing task.')
-
-                        if not self._synthesize(self.conf, task_name,
-                                                str(elapsed_time_hours),
-                                                str(max_mem_gb)):
-                            return
+                        logger.debug('Resetting task.')
 
                         @self.db.tx
                         def F(tx):
@@ -1373,10 +1364,18 @@ class TaskManager(Manager, name='task'):
                                                               state_id,
                                                               reason_id)
                                     VALUES (%s, %s, %s)
-                                    ''', (task_id, TaskState.ts_synthesized,
-                                          TaskReason.tr_task_rerun_synthesize))
+                                    ''', (task_id, TaskState.ts_waiting,
+                                          TaskReason.tr_task_rerun_reset))
 
-                        state = 'ts_synthesized'
+                        logger.debug('Cleaning task.')
+
+                        if not self._clean(self.conf, task_name):
+                            return
+
+                        if not self._scrub(self.conf, task_name):
+                            return
+
+                        state = 'ts_waiting'
 
                     if state == 'ts_synthesized':
                         logger.debug('Marking task cleanable.')

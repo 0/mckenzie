@@ -34,6 +34,9 @@ VALUES
 	({{{V TaskState.ts_failed}}}, {{{V TaskState.ts_waiting}}}, FALSE),
 	-- Task must succeed.
 	({{{V TaskState.ts_running}}}, {{{V TaskState.ts_done}}}, FALSE),
+	-- Task must be cleaned and scrubbed. Could result in dependencies no
+	-- longer being satisfied.
+	({{{V TaskState.ts_done}}}, {{{V TaskState.ts_waiting}}}, FALSE),
 	-- Task must be synthesized.
 	({{{V TaskState.ts_done}}}, {{{V TaskState.ts_synthesized}}}, FALSE),
 	({{{V TaskState.ts_synthesized}}}, {{{V TaskState.ts_cleanable}}}, TRUE),
