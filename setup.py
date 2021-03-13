@@ -2,7 +2,7 @@ import setuptools
 
 setuptools.setup(
     name='mckenzie',
-    version='0.1.0+dev',
+    version='0.1.0',
     author='Dmitri Iouchtchenko',
     author_email='diouchtc@uwaterloo.ca',
     url='https://github.com/0/mckenzie',
